@@ -16,7 +16,7 @@
     <p class="muted">Sign in with username</p>
     <form id="login-form">
       <label>Username<input name="username" autocomplete="username" required autofocus></label>
-      <label>Password<input name="password" type="password" autocomplete="current-password" required><small class="password-hint" data-password-hint>Password must be at least 8 characters.</small></label>
+      <label>Password<div class="password-toggle-field"><input name="password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" data-password-toggle aria-label="Show password"><svg data-password-eye viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><svg data-password-eye-off viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8"/><path d="M9.9 5.2A10.7 10.7 0 0112 5c6.4 0 10 7 10 7a15.8 15.8 0 01-3.1 3.9M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10.7 10.7 0 004.1-.8"/></svg></button></div><small class="password-hint" data-password-hint>Password must be at least 8 characters.</small></label>
       <button class="primary full-width" type="submit">Sign in</button>
     </form>
     <p id="login-message" class="form-message" role="status"></p>
@@ -25,5 +25,19 @@
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script type="module" src="js/login.js"></script>
+  <script>
+    document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+      const input = button.parentElement.querySelector("input");
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", () => {
+        const visible = input.type === "password";
+        input.type = visible ? "text" : "password";
+        button.setAttribute("aria-label", visible ? "Hide password" : "Show password");
+        button.querySelector("[data-password-eye]").hidden = visible;
+        button.querySelector("[data-password-eye-off]").hidden = !visible;
+        input.focus({ preventScroll: true });
+      });
+    });
+  </script>
 </body>
 </html>

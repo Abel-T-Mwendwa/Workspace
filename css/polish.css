@@ -552,6 +552,38 @@ textarea:focus {
   font-size: 13px;
 }
 
+.delivery-item-row input.field-error {
+  border-color: #bb3440;
+  background: #fff0f1;
+}
+
+.delivery-items-cell {
+  cursor: pointer;
+}
+
+.delivery-items-cell:hover,
+.delivery-items-cell:focus-visible {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+.delivery-items-cell:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.delivery-status-green {
+  color: var(--green);
+}
+
+.delivery-status-red {
+  color: var(--red);
+}
+
+.delivery-status-orange {
+  color: #ea580c;
+}
+
 .dispatch-controls {
   display: grid;
   min-width: 150px;
@@ -561,6 +593,41 @@ textarea:focus {
 .dispatch-controls select,
 .dispatch-controls button {
   min-height: 40px;
+}
+
+.delivery-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.delivery-table-actions button,
+.delivery-table-actions select {
+  min-width: 84px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+  transition: none;
+}
+
+.delivery-table-actions .dispatch-controls {
+  flex: 1 1 150px;
+  min-width: min(150px, 100%);
+}
+
+.delivery-table-actions .dispatch-controls select,
+.delivery-table-actions .dispatch-controls button {
+  width: 100%;
+}
+
+.delivery-table-actions button:hover:not(:disabled),
+.delivery-table-actions button:active:not(:disabled) {
+  transform: none;
 }
 
 .rider-assignment-control {
@@ -693,6 +760,65 @@ textarea:focus {
   color: var(--muted);
   font-size: 12px;
   font-weight: 400;
+}
+
+.password-toggle-field {
+  position: relative;
+}
+
+.password-toggle-field input {
+  padding-right: 42px;
+}
+
+.password-toggle-field input[type="password"]::-ms-reveal,
+.password-toggle-field input[type="password"]::-ms-clear {
+  display: none;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: auto 0;
+  padding: 0;
+  border: 0;
+  transition: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.password-toggle:hover,
+.password-toggle:focus,
+.password-toggle:active {
+  top: 0;
+  bottom: 0;
+  right: 10px;
+  margin: auto 0;
+  transform: none;
+  box-shadow: none;
+  background: transparent;
+  outline: none;
+}
+
+.password-toggle svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.password-toggle svg[hidden] {
+  display: none;
 }
 
 .session-note {

@@ -1,0 +1,46 @@
+DELIVERY AND RIDER REQUEST TEST DATA
+
+All users, client details, contact numbers, and locations below are fictitious.
+There are 10 delivery requests and 10 rider requests. This is a readable text
+fixture, not an import script. DL/RJ references are illustrative; the app
+generates actual references when records are created.
+
+DELIVERY REQUESTS
+
+| # | Created by       | Client           | Contact name   | Contact number | Item(s): SO / name / qty / delivery address                 | Date       | Time  | Special instruction            | Production | Dispatch     | Transport / vehicle      |
+|---|------------------|------------------|----------------|----------------|-------------------------------------------------------------|------------|-------|---------------------------------|------------|--------------|--------------------------|
+| 1 | test.sales01     | Acacia Cafe      | Alex Sample    | +254700000001  | SO-TEST-DL-001 / Polo shirts / 12 / Acacia Cafe, Nairobi, Nairobi County | 2026-10-24 | 09:00 | Call on arrival                 | Ready      | Delivered    | Company / KDA 101A        |
+| 2 | test.sales01     | Bluebird Hardware| Blair Sample   | +254700000002  | SO-TEST-DL-002 / Caps / 24 / Bluebird Hardware, Thika, Kiambu County | 2026-10-24 | 10:00 | Deliver to rear entrance        | Ready      | Not delivered| —                        |
+| 3 | test.sales02     | Cedar Grove School| Casey Sample  | +254700000003  | SO-TEST-DL-003 / T-shirts / 30 / Cedar Grove School, Ruiru, Kiambu County | 2026-10-25 | 11:00 | Ask for the office administrator| Not ready  | Not delivered| —                        |
+| 4 | test.sales02     | Driftwood Hotel  | Devon Sample   | +254700000004  | SO-TEST-DL-004 / Aprons / 8 / Driftwood Hotel, Naivasha, Nakuru County | 2026-10-25 | 12:00 | Handle package with care        | Ready      | Delivered    | Client / —               |
+| 5 | test.production01| Everbright Clinic| Ellis Sample   | +254700000005  | SO-TEST-DL-005 / Scrub tops / 15 / Everbright Clinic, Westlands, Nairobi County | 2026-10-26 | 13:00 | Reception delivery              | Not ready  | Not delivered| —                        |
+| 6 | test.sales03     | Fern and Finch   | Frankie Sample | +254700000006  | SO-TEST-DL-006 / Tote bags / 40 / Fern and Finch, Karen, Nairobi County | 2026-10-26 | 14:00 | Split into two packages         | Ready      | Not delivered| —                        |
+| 7 | test.sales03     | Golden Millet    | Gray Sample    | +254700000007  | SO-TEST-DL-007 / Hoodies / 10 / Golden Millet, Eldoret, Uasin Gishu County | 2026-10-27 | 09:00 | Confirm recipient by phone      | Ready      | Delivered    | Company / KDB 202B        |
+| 8 | test.sales04     | Harbor Books     | Harper Sample  | +254700000008  | SO-TEST-DL-008 / Work shirts / 6 / Harbor Books, Mombasa, Mombasa County | 2026-10-27 | 10:00 | Deliver during business hours   | Not ready  | Not delivered| —                        |
+| 9 | test.dispatch01  | Ivory Dental     | Indy Sample    | +254700000009  | SO-TEST-DL-009 / Polo shirts / 9 / Ivory Dental, Kisumu, Kisumu County | 2026-10-28 | 11:00 | Call clinic before dispatch     | Ready      | Not delivered| —                        |
+|10 | test.sales04     | Juniper Market   | Jules Sample   | +254700000010  | SO-TEST-DL-010 / Shopping bags / 20 / Juniper Market, Machakos, Machakos County | 2026-10-28 | 12:00 | Leave with store manager        | Ready      | Delivered    | Company / KDC 303C        |
+
+Illustrative delivery references: DL20261001 through DL20261010.
+For a Delivered record, production is Ready and dispatch/transport details are
+present. Company transport examples include a vehicle; Client transport does
+not require one. Not delivered records have no dispatch transport or vehicle.
+
+RIDER REQUESTS
+
+| # | Created by       | Client             | Contact name   | Contact number | Address                                  | Type    | Details                          | Scheduled  | Expected | Assigned rider | Rider slot | Status       | Decline reason |
+|---|------------------|--------------------|----------------|----------------|------------------------------------------|---------|----------------------------------|------------|----------|----------------|------------|--------------|----------------|
+| 1 | test.sales01     | Kijani Farms       | Kai Sample     | +254700000011  | Kijani Farms, Karen, Nairobi County      | Pickup  | Collect one sample package       | 2026-10-24 | 09:00    | rider.test01   | 09:00-10:00| Finished     | —              |
+| 2 | test.sales01     | Lakeview Tours     | Lee Sample     | +254700000012  | Lakeview Tours, Naivasha, Nakuru County  | Dropoff | Deliver signed documents         | 2026-10-24 | 10:00    | rider.test02   | 10:00-11:00| In progress  | —              |
+| 3 | test.sales02     | Maple Learning Hub | Morgan Sample  | +254700000013  | Maple Learning Hub, Ruiru, Kiambu County| Pickup  | Collect printed uniforms         | 2026-10-24 | 11:00    | —              | —          | Not started  | —              |
+| 4 | test.sales02     | Northstar Logistics| Noah Sample    | +254700000014  | Northstar Logistics, Industrial Area, Nairobi County | Dropoff | Deliver branded safety vests | 2026-10-24 | 12:00 | rider.test03 | 12:00-13:00 | Started | — |
+| 5 | test.sales03     | Olive Branch Bakery| Oak Sample    | +254700000015  | Olive Branch Bakery, Kilimani, Nairobi County | Pickup | Collect apron proof for approval | 2026-10-25 | 09:00 | — | — | Not started | — |
+| 6 | test.sales03     | Pinecone Dental    | Parker Sample  | +254700000016  | Pinecone Dental, Westlands, Nairobi County | Dropoff | Deliver scrub tops to reception | 2026-10-25 | 10:00    | rider.test01   | 10:00-11:00| Started      | —              |
+| 7 | test.sales04     | Quarry Works       | Quinn Sample   | +254700000017  | Quarry Works, Athi River, Machakos County| Pickup  | Collect jacket size samples      | 2026-10-26 | 11:00    | —              | —          | Not started  | —              |
+| 8 | test.sales04     | Riverbend Academy  | Reese Sample   | +254700000018  | Riverbend Academy, Nakuru, Nakuru County | Dropoff | Deliver school sportswear        | 2026-10-26 | 13:00    | —              | —          | Declined     | Requested time unavailable |
+| 9 | test.sales05     | Suntrail Energy    | Sky Sample     | +254700000019  | Suntrail Energy, Kisumu, Kisumu County   | Pickup  | Collect approved logo artwork    | 2026-10-27 | 14:00    | —              | —          | Not started  | —              |
+|10 | test.sales05     | Treetop Nursery    | Taylor Sample  | +254700000020  | Treetop Nursery, Mombasa, Mombasa County | Dropoff | Deliver staff tote bags          | 2026-10-23 | 15:00    | rider.test02   | 15:00-16:00| Finished     | —              |
+
+Illustrative rider references: RJ20261001 through RJ20261010.
+Rider slots are one hour. Not started requests have no assignment or rider
+slot. Assigned requests include both the rider and slot. Declined requests
+have no assignment and include a reason.

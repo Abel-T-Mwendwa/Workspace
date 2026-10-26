@@ -1,0 +1,52 @@
+ARTWORK REQUEST TEST DATA
+
+All users and client details below are fictitious. There are 10 records for
+each app role: salesperson, designer, and admin. This is a readable text
+fixture, not an import script. The application normally allows salespeople
+to submit requests; designer/admin records are included for testing views
+and reporting.
+
+Role: salesperson
+Test user: test.sales01
+| # | Category   | Client name        | SO number             | Product / code / colour        | Branding details                                           | Date needed | Status           |
+|---|------------|--------------------|-----------------------|--------------------------------|------------------------------------------------------------|-------------|------------------|
+| 1 | New client | Acacia Cafe        | SO-TEST-SALES-001     | Polo shirt / PK-101 / navy     | Embroidery; logo=Acacia; position=left chest; size=small   | 2026-10-28  | Requested        |
+| 2 | Old client | Bluebird Hardware  | SO-TEST-SALES-002     | Cap / PK-202 / red             | Embroidery; logo=Bluebird; position=front; size=medium     | 2026-10-29  | In progress      |
+| 3 | New client | Cedar Grove School| SO-TEST-SALES-003     | T-shirt / PK-303 / white       | Screen print; logo=Cedar Grove; position=front; size=large | 2026-10-30  | Requested        |
+| 4 | Old client | Driftwood Hotel   | SO-TEST-SALES-004     | Apron / PK-404 / black         | Heat transfer; logo=Driftwood; position=upper chest        | 2026-10-31  | Change requested |
+| 5 | New client | Everbright Clinic | SO-TEST-SALES-005     | Scrub top / PK-505 / teal      | Embroidery; logo=Everbright; position=left chest; size=small| 2026-11-01  | Requested        |
+| 6 | Old client | Fern & Finch      | SO-TEST-SALES-006     | Tote bag / PK-606 / natural    | Screen print; logo=Fern & Finch; position=centre; size=large| 2026-11-02 | Done             |
+| 7 | New client | Golden Millet     | SO-TEST-SALES-007     | Hoodie / PK-707 / grey         | Embroidery; logo=Golden Millet; position=left chest        | 2026-11-03  | In progress      |
+| 8 | Old client | Harbor Books      | SO-TEST-SALES-008     | Work shirt / PK-808 / khaki    | Screen print; logo=Harbor; position=back; size=large       | 2026-11-04  | Requested        |
+| 9 | New client | Ivory Dental      | SO-TEST-SALES-009     | Polo shirt / PK-909 / sky blue | Embroidery; logo=Ivory Dental; position=left chest; size=small| 2026-11-05| Change requested |
+|10 | Old client | Juniper Market    | SO-TEST-SALES-010     | Shopping bag / PK-110 / green  | Screen print; logo=Juniper; position=front; size=medium    | 2026-11-06  | Requested        |
+
+Role: designer
+Test user: test.design01
+| # | Category   | Client name         | SO number              | Product / code / colour         | Branding details                                                | Date needed | Status           |
+|---|------------|---------------------|------------------------|---------------------------------|-----------------------------------------------------------------|-------------|------------------|
+| 1 | New client | Kijani Farms        | SO-TEST-DESIGN-001     | Polo shirt / PK-211 / forest    | Embroidery; logo=Kijani; position=left chest; size=small        | 2026-10-28  | In progress      |
+| 2 | Old client | Lakeview Tours      | SO-TEST-DESIGN-002     | Cap / PK-312 / beige            | Embroidery; logo=Lakeview; position=front; size=medium          | 2026-10-29  | Requested        |
+| 3 | New client | Maple Learning Hub  | SO-TEST-DESIGN-003     | T-shirt / PK-413 / orange       | Screen print; logo=Maple; position=front; size=large            | 2026-10-30  | Change requested |
+| 4 | Old client | Northstar Logistics | SO-TEST-DESIGN-004     | Safety vest / PK-514 / lime     | Heat transfer; logo=Northstar; position=back; size=large        | 2026-10-31  | Done             |
+| 5 | New client | Olive Branch Bakery | SO-TEST-DESIGN-005     | Apron / PK-615 / cream          | Screen print; logo=Olive Branch; position=upper chest; size=medium| 2026-11-01| Requested        |
+| 6 | Old client | Pinecone Dental     | SO-TEST-DESIGN-006     | Scrub top / PK-716 / lilac      | Embroidery; logo=Pinecone; position=left chest; size=small      | 2026-11-02  | In progress      |
+| 7 | New client | Quarry Works        | SO-TEST-DESIGN-007     | Work jacket / PK-817 / charcoal | Embroidery; logo=Quarry Works; position=left chest; size=medium | 2026-11-03  | Requested        |
+| 8 | Old client | Riverbend Academy   | SO-TEST-DESIGN-008     | Hoodie / PK-918 / maroon        | Screen print; logo=Riverbend; position=front; size=large        | 2026-11-04  | Change requested |
+| 9 | New client | Suntrail Energy     | SO-TEST-DESIGN-009     | Polo shirt / PK-019 / white     | Embroidery; logo=Suntrail; position=left chest; size=small      | 2026-11-05  | Done             |
+|10 | Old client | Treetop Nursery     | SO-TEST-DESIGN-010     | Tote bag / PK-120 / natural     | Screen print; logo=Treetop; position=front; size=large          | 2026-11-06  | Requested        |
+
+Role: admin
+Test user: test.admin01
+| # | Category   | Client name          | SO number            | Product / code / colour         | Branding details                                             | Date needed | Status           |
+|---|------------|----------------------|----------------------|---------------------------------|--------------------------------------------------------------|-------------|------------------|
+| 1 | New client | Umber Fitness        | SO-TEST-ADMIN-001    | T-shirt / PK-221 / black        | Screen print; logo=Umber; position=front; size=large         | 2026-10-28  | Requested        |
+| 2 | Old client | Valley Fresh         | SO-TEST-ADMIN-002    | Polo shirt / PK-322 / green      | Embroidery; logo=Valley Fresh; position=left chest; size=small| 2026-10-29 | In progress      |
+| 3 | New client | Willow Pharmacy      | SO-TEST-ADMIN-003    | Lab coat / PK-423 / white        | Embroidery; logo=Willow; position=left chest; size=medium    | 2026-10-30  | Done             |
+| 4 | Old client | Xenia Events         | SO-TEST-ADMIN-004    | Event tee / PK-524 / yellow      | Screen print; logo=Xenia; position=front; size=large         | 2026-10-31  | Change requested |
+| 5 | New client | Yellowfin Seafood    | SO-TEST-ADMIN-005    | Apron / PK-625 / navy            | Heat transfer; logo=Yellowfin; position=upper chest          | 2026-11-01  | Requested        |
+| 6 | Old client | Zuri Transport       | SO-TEST-ADMIN-006    | Work shirt / PK-726 / blue       | Embroidery; logo=Zuri; position=left chest; size=small        | 2026-11-02  | In progress      |
+| 7 | New client | Amberline Studios    | SO-TEST-ADMIN-007    | Hoodie / PK-827 / burgundy       | Screen print; logo=Amberline; position=back; size=large      | 2026-11-03  | Requested        |
+| 8 | Old client | Brightpath Consulting| SO-TEST-ADMIN-008    | Cap / PK-928 / navy              | Embroidery; logo=Brightpath; position=front; size=medium     | 2026-11-04  | Done             |
+| 9 | New client | Coastline Outdoors   | SO-TEST-ADMIN-009    | Windbreaker / PK-029 / teal      | Heat transfer; logo=Coastline; position=left chest; size=medium| 2026-11-05| Change requested |
+|10 | Old client | Dawnridge Hotel      | SO-TEST-ADMIN-010    | Polo shirt / PK-130 / white      | Embroidery; logo=Dawnridge; position=left chest; size=small  | 2026-11-06  | Requested        |

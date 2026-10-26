@@ -20,9 +20,9 @@
       </form>
     </section>
     <section class="panel">
-      <div class="section-heading"><h2>Delivery requests</h2><select id="delivery-status-filter" aria-label="Filter deliveries"><option value="">All deliveries</option><option>Not ready</option><option>Ready</option><option>Delivered</option></select></div>
+      <div class="section-heading"><h2>Delivery requests</h2><select id="delivery-status-filter" aria-label="Filter deliveries"><option value="">All deliveries</option><option>Not ready</option><option>Ready</option><option>Not delivered</option><option>Delivered</option></select></div>
       <div class="toolbar"><input id="delivery-search" placeholder="Search reference or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
-      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="ref_no">Ref no</th><th data-sort="created_at">Requested</th><th>Client / contact</th><th>Items</th><th>Delivery</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th data-sort="ref_no">Ref no</th><th data-sort="created_at">Requested</th><th>Client / contact</th><th>Items</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
       <p id="delivery-empty" class="empty-state hidden">No delivery requests found.</p>
     </section>
   </main>
@@ -32,6 +32,13 @@
       <div id="delivery-item-lines" class="line-dialog-list"></div>
       <p id="delivery-items-message" class="form-message" role="alert"></p>
       <div class="dialog-actions"><button type="button" class="secondary" id="delivery-item-add" data-shortcut-add>Add line</button><button type="button" class="quiet" id="delivery-item-discard">Discard</button><button type="button" class="primary" id="delivery-item-save" data-shortcut-save>Save changes</button></div>
+    </div>
+  </dialog>
+  <dialog id="delivery-items-view-dialog" class="line-editor-dialog delivery-items-dialog">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2>Items</h2><button type="button" class="icon-button" data-items-view-close aria-label="Close">×</button></div>
+      <div id="delivery-items-view-content" class="table-wrap"></div>
+      <div class="dialog-actions"><button type="button" class="primary" data-items-view-close>Close</button></div>
     </div>
   </dialog>
   <dialog id="delivery-view-dialog"><div class="section-heading"><h2>Delivery details</h2><button type="button" class="icon-button" data-delivery-view-close aria-label="Close">×</button></div><div id="delivery-view-content"></div></dialog>

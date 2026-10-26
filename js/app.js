@@ -29,7 +29,7 @@ let deliveryItemsState = { initial: [], lines: [] };
 let endingSession = false;
 let sessionExpiryTimer = null;
 const SORT_STATE_KEY = `artworkSort:${page}`;
-const SORT_KEYS = ["sr", "created_month", "created_at", "ref_no"];
+const SORT_KEYS = ["sr", "created_month", "created_at", "ref_no", ...(page === "designer.html" ? ["date_needed"] : []), ...(page === "deliveries.html" ? ["delivery_schedule"] : [])];
 function readSortState() {
   try {
     const saved = JSON.parse(localStorage.getItem(SORT_STATE_KEY) || "null");
@@ -39,9 +39,12 @@ function readSortState() {
     return null;
   }
 }
-const savedSortState = readSortState();
-let activeSort = savedSortState || { key: "sr", direction: "asc" };
-let userSortKey = savedSortState?.key || null;
+const savedSortState = page === "deliveries.html" ? null : readSortState();
+let activeSort = savedSortState || (page === "designer.html"
+  ? { key: "date_needed", direction: "desc" }
+  : page === "deliveries.html" ? { key: "delivery_schedule", direction: "asc" }
+    : { key: "sr", direction: "asc" });
+let userSortKey = savedSortState?.key || (page === "designer.html" ? "date_needed" : page === "deliveries.html" ? "delivery_schedule" : null);
 let donePopoverTrigger = null;
 
 function debounce(callback, delay = 180) {
@@ -740,6 +743,18 @@ function sortRows(rows) {
       comparison = new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
     } else if (activeSort.key === "ref_no") {
       comparison = String(left.ref_no || "").localeCompare(String(right.ref_no || ""), undefined, { numeric: true, sensitivity: "base" });
+    } else if (activeSort.key === "date_needed") {
+      const leftDate = left.date_needed ? Date.parse(`${left.date_needed}T00:00:00`) : NaN;
+      const rightDate = right.date_needed ? Date.parse(`${right.date_needed}T00:00:00`) : NaN;
+      if (!Number.isFinite(leftDate)) return Number.isFinite(rightDate) ? 1 : 0;
+      if (!Number.isFinite(rightDate)) return -1;
+      comparison = leftDate - rightDate;
+    } else if (activeSort.key === "delivery_schedule") {
+      const leftDate = left.delivery_date && left.delivery_time ? Date.parse(`${left.delivery_date}T${left.delivery_time}`) : NaN;
+      const rightDate = right.delivery_date && right.delivery_time ? Date.parse(`${right.delivery_date}T${right.delivery_time}`) : NaN;
+      if (!Number.isFinite(leftDate)) return Number.isFinite(rightDate) ? 1 : 0;
+      if (!Number.isFinite(rightDate)) return -1;
+      comparison = leftDate - rightDate;
     }
     return comparison * direction;
   });
@@ -749,7 +764,7 @@ function updateSortIndicators() {
   document.querySelectorAll("th[data-sort]").forEach((header) => {
     const label = header.dataset.sortLabel || header.textContent.trim();
     header.dataset.sortLabel = label;
-    header.title = "Double-click to sort";
+    header.title = page === "deliveries.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "Click to sort" : "Double-click to sort";
     header.classList.add("sortable-header");
     const active = header.dataset.sort === activeSort.key;
     header.textContent = `${label}${active ? (activeSort.direction === "asc" ? " ▲" : " ▼") : ""}`;
@@ -759,15 +774,17 @@ function updateSortIndicators() {
 
 function bindSortableHeaders() {
   document.querySelectorAll("th[data-sort]").forEach((header) => {
-    header.addEventListener("dblclick", () => {
+    header.addEventListener(page === "deliveries.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "click" : "dblclick", () => {
       activeSort = userSortKey === header.dataset.sort
         ? { key: activeSort.key, direction: activeSort.direction === "asc" ? "desc" : "asc" }
         : { key: header.dataset.sort, direction: "asc" };
       userSortKey = header.dataset.sort;
-      try {
-        localStorage.setItem(SORT_STATE_KEY, JSON.stringify(activeSort));
-      } catch (error) {
-        console.error("Could not save the table sort preference.", error);
+      if (page !== "deliveries.html") {
+        try {
+          localStorage.setItem(SORT_STATE_KEY, JSON.stringify(activeSort));
+        } catch (error) {
+          console.error("Could not save the table sort preference.", error);
+        }
       }
       if (page === "sales.html") renderSales();
       else if (page === "designer.html") void renderDesigner();
@@ -1290,10 +1307,9 @@ async function renderDesigner() {
       const claimed = row.assigned_designer === profile.id && row.status === "In progress";
       const canStart = row.status !== "Done" && row.status !== "In progress"
         && (row.assigned_designer === null || row.assigned_designer === profile.id);
-      return `<tr data-entry-id="${escapeHtml(row.id)}"><td><strong>${escapeHtml(row.ref_no)}</strong><br>${escapeHtml(row.client_name)}</td><td>
-        <div class="designer-line-fields">${lineFieldMarkup("product", row.product, { mode: "view" })}${brandingFieldMarkup(row.branding_details, { mode: "view" })}</div>
-        <p>${otherDetails}</p></td>
-        <td>${localDate(row.date_needed)}</td><td>${escapeHtml(profileName(row.created_by))}</td>
+      return `<tr data-entry-id="${escapeHtml(row.id)}"><td><strong>${escapeHtml(row.ref_no)}</strong><br>${escapeHtml(row.client_name)}</td>
+        <td>${localDate(row.date_needed)}</td><td><div class="designer-line-fields">${lineFieldMarkup("product", row.product, { mode: "view" })}${brandingFieldMarkup(row.branding_details, { mode: "view" })}</div>
+        <p>${otherDetails}</p></td><td>${escapeHtml(profileName(row.created_by))}</td>
         <td>${statusBadge(row.status)}</td>
         <td>${changes.map((change) => `<div class="change-item">${escapeHtml(change.change_text)}<small>${escapeHtml(change.requested_by)} · ${localDate(change.requested_on)}</small></div>`).join("") || "—"}</td>
         <td><textarea data-notes="${escapeHtml(row.id)}" rows="2" placeholder="Designer notes or final file URL" ${claimed ? "" : "disabled"}>${escapeHtml(row.designer_notes)}</textarea></td>
@@ -1937,7 +1953,7 @@ function renderItemLineEditor() {
       input.name = name;
       input.type = type;
       input.required = true;
-      input.maxLength = type === "number" ? 5 : 200;
+      if (name !== "address") input.maxLength = type === "number" ? 5 : 200;
       if (type === "number") {
         input.min = "1";
         input.step = "1";
@@ -1945,7 +1961,10 @@ function renderItemLineEditor() {
       }
       input.value = name === "so_number" && !line[name] ? SO_NUMBER_PREFIX : line[name] ?? "";
       if (name === "so_number") protectSoNumberInput(input);
-      input.addEventListener("input", () => { line[name] = input.value; });
+      input.addEventListener("input", () => {
+        line[name] = input.value;
+        input.classList.remove("field-error");
+      });
       label.append(input);
       row.append(label);
     }
@@ -1987,11 +2006,17 @@ function openDeliveryItems() {
   document.querySelector('#delivery-item-lines input')?.focus();
 }
 
+function clearDeliveryItemErrors() {
+  document.querySelectorAll("#delivery-item-lines .field-error").forEach((input) => input.classList.remove("field-error"));
+  document.querySelector("#delivery-items-message").textContent = "";
+}
+
 function closeDeliveryItems(discard = true) {
   const dialog = document.querySelector("#delivery-items-dialog");
   if (!dialog.open) return;
   if (discard && JSON.stringify(deliveryItemsState.lines) !== JSON.stringify(deliveryItemsState.initial)
     && !confirm("Discard unsaved item details?")) return;
+  clearDeliveryItemErrors();
   dialog.close();
   document.querySelector("#delivery-items-open").focus();
 }
@@ -2031,10 +2056,6 @@ async function submitDelivery(event) {
     toast("Choose an available one-hour delivery slot.", "error");
     return;
   }
-  if (items.some((line) => line.address.split(",").map((part) => part.trim()).filter(Boolean).length < 3)) {
-    toast("Enter each delivery address as Place, Town, County.", "error");
-    return;
-  }
   setBusy(button, true, "Requesting…");
   try {
     const { data, error } = await client.from("deliveries").insert({
@@ -2066,15 +2087,22 @@ function deliveryStatusFilter(query) {
   const filter = document.querySelector("#delivery-status-filter")?.value || "";
   if (filter === "Not ready") return query.eq("production_status", "Not ready");
   if (filter === "Ready") return query.eq("production_status", "Ready").eq("dispatch_status", "Not delivered");
+  if (filter === "Not delivered") return query.eq("dispatch_status", "Not delivered").not("dispatched_at", "is", null);
   if (filter === "Delivered") return query.eq("dispatch_status", "Delivered");
   return query;
 }
 
 async function queryDeliveryPage(offset, search, searchField) {
-  const sortColumn = ["sr", "ref_no", "created_at"].includes(activeSort.key) ? activeSort.key : "sr";
-  let query = deliveryStatusFilter(client.from("deliveries").select(deliverySelect))
-    .order(sortColumn, { ascending: activeSort.direction === "asc" })
-    .range(offset, offset + PAGE_SIZE - 1);
+  const ascending = activeSort.direction === "asc";
+  let query = deliveryStatusFilter(client.from("deliveries").select(deliverySelect));
+  if (activeSort.key === "delivery_schedule") {
+    query = query.order("delivery_date", { ascending, nullsFirst: false })
+      .order("delivery_time", { ascending, nullsFirst: false });
+  } else {
+    const sortColumn = ["sr", "ref_no", "created_at"].includes(activeSort.key) ? activeSort.key : "sr";
+    query = query.order(sortColumn, { ascending });
+  }
+  query = query.range(offset, offset + PAGE_SIZE - 1);
   if (search) query = query.ilike(searchField, `%${search}%`);
   const { data, error } = await query;
   if (error) throw error;
@@ -2120,23 +2148,23 @@ async function loadActiveVehicles() {
 
 function deliveryActions(row) {
   const role = profile.role;
-  if (row.dispatch_status === "Delivered") return `<span class="muted">Delivered ${escapeHtml(localDateTime(row.delivered_at))}</span>`;
+  if (row.dispatch_status === "Delivered") return "";
   if ((role === "production" || role === "admin") && row.production_status !== "Ready") {
     return `<button class="primary" data-delivery-ready="${escapeHtml(row.id)}">Ready</button>`;
   }
   if (role === "dispatch" || role === "admin") {
-    if (row.production_status !== "Ready") return '<span class="muted">Waiting for production</span>';
+    if (row.production_status !== "Ready") return "";
+    if (!row.dispatched_at) return `<button class="primary" data-delivery-dispatch="${escapeHtml(row.id)}">Packed</button>`;
     const vehicleOptions = vehicleRows.map((vehicle) =>
       `<option value="${escapeHtml(vehicle.id)}"${row.vehicle_id === vehicle.id ? " selected" : ""}>${escapeHtml(vehicle.registration_number)} · ${escapeHtml(vehicle.description)}</option>`
     ).join("");
     return `<div class="dispatch-controls">
-      <select data-transport="${escapeHtml(row.id)}" aria-label="Transport"><option value="">Transport…</option><option${row.transport === "Client" ? " selected" : ""}>Client</option><option${row.transport === "Company" ? " selected" : ""}>Company</option></select>
+      <select data-transport="${escapeHtml(row.id)}" aria-label="Transport"><option value="">Choose transport</option><option${row.transport === "Client" ? " selected" : ""}>Client</option><option${row.transport === "Company" ? " selected" : ""}>Company</option></select>
       <select data-vehicle="${escapeHtml(row.id)}" aria-label="Vehicle" class="${row.transport === "Company" ? "" : "hidden"}"><option value="">Choose vehicle…</option>${vehicleOptions}</select>
-      ${row.dispatched_at ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}">Delivered</button>` : `<button class="primary" data-delivery-dispatch="${escapeHtml(row.id)}">Dispatch</button>`}
+      ${row.transport && (row.transport !== "Company" || row.vehicle_id) ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}">Delivered</button>` : ""}
     </div>`;
   }
-  if (row.production_status === "Ready") return `<span class="muted">Ready ${escapeHtml(localDateTime(row.ready_at))}</span>`;
-  return '<span class="muted">Not ready</span>';
+  return "";
 }
 
 function renderDeliveryRows() {
@@ -2149,15 +2177,16 @@ function renderDeliveryRows() {
     }
   ]));
   const query = document.querySelector("#delivery-search")?.value.trim().toLowerCase() || "";
-  const filtered = deliveryRows.filter((row) => !query
-    || `${row.ref_no} ${row.client_name} ${row.contact_name}`.toLowerCase().includes(query));
+  const filtered = sortRows(deliveryRows.filter((row) => !query
+    || `${row.ref_no} ${row.client_name} ${row.contact_name}`.toLowerCase().includes(query)));
   tbody.innerHTML = filtered.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}">
-    <td>${escapeHtml(row.sr)}</td><td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td>
+    <td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date)}${row.delivery_time ? `<br>${escapeHtml(deliverySlotLabel(row.delivery_time))}` : ""}</td>
+    <td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td>
     <td>${escapeHtml(row.client_name)}<br><span class="muted">${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</span></td>
-    <td>${deliveryItemSummary(row.items)}</td><td>${escapeHtml(row.delivery_date)} ${escapeHtml(deliverySlotLabel(row.delivery_time))}</td>
-    <td>${escapeHtml(row.production_status)}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>
-    <td>${escapeHtml(row.dispatch_status)}${row.dispatched_at ? `<br><small>Dispatched ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>
-    <td>${["admin", "production", "dispatch", "salesperson"].includes(profile.role) ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${deliveryActions(row)}</td></tr>`).join("");
+    <td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View items">${deliveryItemSummary(row.items)}</td>
+    <td><span class="${row.production_status === "Ready" ? "delivery-status-green" : "delivery-status-red"}">${escapeHtml(row.production_status)}</span>${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>
+    <td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>
+    <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${deliveryActions(row)}</div></td></tr>`).join("");
   dispatchValues.forEach((values, id) => {
     const transport = tbody.querySelector(`[data-transport="${CSS.escape(id)}"]`);
     const vehicle = tbody.querySelector(`[data-vehicle="${CSS.escape(id)}"]`);
@@ -2178,28 +2207,62 @@ function renderDeliveryRows() {
     const row = deliveryRows.find((item) => item.id === button.dataset.deliveryView);
     if (row) void openDeliveryView(row, button);
   }));
-  tbody.querySelectorAll("[data-transport]").forEach((select) => select.addEventListener("change", () => {
+  tbody.querySelectorAll("[data-delivery-items]").forEach((cell) => {
+    const open = () => {
+      const row = deliveryRows.find((item) => item.id === cell.dataset.deliveryItems);
+      if (row) openDeliveryItemsView(row, cell);
+    };
+    cell.addEventListener("click", open);
+    cell.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+  tbody.querySelectorAll("[data-transport]").forEach((select) => select.addEventListener("change", async () => {
     const vehicle = tbody.querySelector(`[data-vehicle="${CSS.escape(select.dataset.transport)}"]`);
     vehicle?.classList.toggle("hidden", select.value !== "Company");
+    if (vehicle && select.value !== "Company") vehicle.value = "";
+    select.disabled = true;
+    await updateDelivery(select.dataset.transport, {
+      transport: select.value || null,
+      vehicle_id: select.value === "Company" ? vehicle?.value || null : null
+    }, null, "Transport saved.");
+    if (select.isConnected) select.disabled = false;
+  }));
+  tbody.querySelectorAll("[data-vehicle]").forEach((select) => select.addEventListener("change", async () => {
+    select.disabled = true;
+    await updateDelivery(select.dataset.vehicle, {
+      vehicle_id: select.value || null
+    }, null, "Vehicle saved.");
+    if (select.isConnected) select.disabled = false;
   }));
   tbody.querySelectorAll("[data-delivery-dispatch]").forEach((button) => button.addEventListener("click", async () => {
     const id = button.dataset.deliveryDispatch;
-    const transport = tbody.querySelector(`[data-transport="${CSS.escape(id)}"]`).value;
-    const vehicle = tbody.querySelector(`[data-vehicle="${CSS.escape(id)}"]`)?.value || null;
-    if (!transport || (transport === "Company" && !vehicle)) {
-      toast("Choose a transport type and, for Company transport, an active vehicle.", "error");
-      return;
-    }
-    await updateDelivery(id, {
-      transport, vehicle_id: transport === "Company" ? vehicle : null,
-      ...(profile.role === "admin" ? { dispatched_at: new Date().toISOString() } : {})
-    }, button, "Delivery dispatched.");
+    await updateDelivery(id, { dispatched_at: new Date().toISOString() }, button, "Delivery packed.");
   }));
   tbody.querySelectorAll("[data-delivery-delivered]").forEach((button) => button.addEventListener("click", () =>
     updateDelivery(button.dataset.deliveryDelivered, {
       dispatch_status: "Delivered",
       ...(profile.role === "admin" ? { delivered_at: new Date().toISOString() } : {})
     }, button, "Delivery marked Delivered.")));
+}
+
+function openDeliveryItemsView(row, trigger) {
+  const items = Array.isArray(row.items) ? row.items : [];
+  const content = document.querySelector("#delivery-items-view-content");
+  content.innerHTML = `<table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Address to deliver</th></tr></thead><tbody>${items.map((item) =>
+    `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.address)}</td></tr>`
+  ).join("")}</tbody></table>`;
+  const dialog = document.querySelector("#delivery-items-view-dialog");
+  const close = () => dialog.close();
+  dialog.querySelectorAll("[data-items-view-close]").forEach((button) => { button.onclick = close; });
+  dialog.onclose = () => { if (trigger.isConnected) trigger.focus(); };
+  dialog.onclick = (event) => {
+    if (event.target === dialog) close();
+  };
+  dialog.showModal();
 }
 
 async function openDeliveryView(row, trigger) {
@@ -2298,17 +2361,34 @@ async function initDeliveries() {
     document.querySelector("#delivery-item-lines").lastElementChild?.querySelector("input")?.focus();
   });
   document.querySelector("#delivery-item-save").addEventListener("click", () => {
-    const lines = deliveryItemsMarkup(deliveryItemsState.lines).filter((line) =>
-      hasSoNumber(line.so_number) || line.item_name || line.quantity || line.address);
-    if (!lines.length || lines.some((line) => !hasSoNumber(line.so_number) || !line.item_name || !line.address
-      || !/^[1-9]\d*$/.test(line.quantity) || Number(line.quantity) > 99999)) {
-      document.querySelector("#delivery-items-message").textContent = "Complete every line with SO number, item, positive quantity, and delivery address.";
+    const lines = deliveryItemsMarkup(deliveryItemsState.lines);
+    clearDeliveryItemErrors();
+    let firstInvalid = null;
+    lines.forEach((line, index) => {
+      const row = document.querySelectorAll("#delivery-item-lines .delivery-item-row")[index];
+      const invalidFields = [
+        ["so_number", !hasSoNumber(line.so_number)],
+        ["item_name", !line.item_name.trim()],
+        ["quantity", !/^[1-9]\d*$/.test(line.quantity) || Number(line.quantity) > 99999],
+        ["address", !line.address.trim()]
+      ];
+      invalidFields.forEach(([name, invalid]) => {
+        if (!invalid) return;
+        const input = row.querySelector(`[name="${name}"]`);
+        input.classList.add("field-error");
+        firstInvalid ||= input;
+      });
+    });
+    if (firstInvalid) {
+      document.querySelector("#delivery-items-message").textContent = "Please fill in the highlighted fields.";
+      firstInvalid.focus();
       return;
     }
     const serialized = JSON.stringify(lines);
     document.querySelector('[name="items"]').value = serialized;
     document.querySelector("#delivery-items-open").textContent = lines.map((line) =>
       `${line.item_name} × ${line.quantity} pcs`).join(" · ");
+    clearDeliveryItemErrors();
     document.querySelector("#delivery-items-dialog").close();
     document.querySelector("#delivery-items-open").focus();
   });
@@ -2328,13 +2408,13 @@ async function initDeliveries() {
       { label: "Received", dateColumn: "created_at" },
       { label: "Marked ready", dateColumn: "ready_at" },
       { label: "Pending", dateColumn: "created_at", filters: { dispatch_status: "Not delivered" } },
-      { label: "Dispatched", dateColumn: "dispatched_at" },
+      { label: "Packed", dateColumn: "dispatched_at" },
       { label: "Delivered", dateColumn: "delivered_at" }
     ]
     : [
       { label: "Requested", dateColumn: "created_at" },
       { label: "Ready", dateColumn: "ready_at" },
-      { label: "Dispatched", dateColumn: "dispatched_at" },
+      { label: "Packed", dateColumn: "dispatched_at" },
       { label: "Delivered", dateColumn: "delivered_at" }
     ];
   bindPeriodSummary("delivery-period", () => renderPeriodSummary("delivery-tallies", "delivery-period", "deliveries", deliveryCards));
@@ -2523,7 +2603,11 @@ function refreshRiderRequestSlots(form) {
   const previousTime = timeSelect.value;
   const available = new Set(availability.availableSlots.map(([time]) => time));
   timeSelect.innerHTML = '<option value="">Choose expected time</option>'
-    + riderRequestSlots().map((slot) => `<option value="${slot.value}"${available.has(slot.value) ? "" : " disabled"}>${slot.label}${available.has(slot.value) ? "" : " — unavailable"}</option>`).join("");
+    + riderRequestSlots().map((slot) => {
+      const endHour = Number(slot.value.slice(0, 2)) + 1;
+      const endLabel = `${endHour % 12 || 12}:00 ${endHour < 12 ? "AM" : "PM"}`;
+      return `<option value="${slot.value}"${available.has(slot.value) ? "" : " disabled"}>${slot.label} - ${endLabel}${available.has(slot.value) ? "" : " - unavailable"}</option>`;
+    }).join("");
   timeSelect.value = available.has(previousTime) ? previousTime : "";
   document.querySelector("#rider-request-slot-hint").textContent = availability.hint;
 }

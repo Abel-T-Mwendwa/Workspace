@@ -171,7 +171,7 @@ function ensurePortalDialogs() {
     const dialog = document.createElement("dialog");
     dialog.id = "rider-assignment-dialog";
     dialog.className = "rider-assignment-dialog";
-    dialog.innerHTML = `<div class="section-heading"><h2>New job assigned</h2></div><p></p><div class="dialog-actions"><button type="button" class="primary" data-assignment-ok>OK</button></div>`;
+    dialog.innerHTML = `<div class="section-heading"><h2>New job request</h2><button type="button" class="icon-button" data-assignment-close aria-label="Close">×</button></div><p></p><div class="dialog-actions"><button type="button" class="primary" data-assignment-ok>OK</button></div>`;
     dialog.addEventListener("cancel", (event) => event.preventDefault());
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog && dialog.dataset.blocking === "true") event.preventDefault();
@@ -290,6 +290,9 @@ async function setupNotifications(client, profile, toast) {
   let timer = null;
   let channel = null;
   let firstRefresh = true;
+  let assignmentTimer = null;
+  const pendingAssignments = new Map();
+  const shownAssignments = new Set();
   if (!button || !dialog || !count || !list) return;
 
   async function refresh() {
@@ -317,8 +320,21 @@ async function setupNotifications(client, profile, toast) {
     }
     firstRefresh = false;
     if (profile.role === "rider") {
-      const assignment = unread.find((item) => item.notification_type === "rider_job_assigned");
-      if (assignment && !blocking) await showAssignment(assignment);
+      unread.filter((item) => item.notification_type === "rider_job_assigned").forEach((item) => {
+        if (!shownAssignments.has(item.id)) {
+          shownAssignments.add(item.id);
+          pendingAssignments.set(item.id, item);
+        }
+      });
+      if (pendingAssignments.size) {
+        if (blocking) updateAssignmentDialog(pendingAssignments.size);
+        else if (assignmentTimer === null) {
+          assignmentTimer = window.setTimeout(() => {
+            assignmentTimer = null;
+            if (pendingAssignments.size && !blocking) void showAssignment();
+          }, 500);
+        }
+      }
     }
     document.dispatchEvent(new CustomEvent("portal:notifications", { detail: notifications }));
     if (dialog.open) renderNotifications();
@@ -354,30 +370,44 @@ async function setupNotifications(client, profile, toast) {
     }
   }
 
-  async function showAssignment(notification) {
+  function updateAssignmentDialog(total) {
+    const dialogEl = document.querySelector("#rider-assignment-dialog");
+    const number = total <= 10
+      ? ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"][total]
+      : String(total);
+    dialogEl.querySelector("h2").textContent = total === 1 ? "New job request" : "New job requests";
+    dialogEl.querySelector("p").textContent = total === 1
+      ? "A new job request has been assigned to you."
+      : `${number} new job requests have been assigned to you.`;
+  }
+
+  async function showAssignment() {
     blocking = true;
     const dialogEl = document.querySelector("#rider-assignment-dialog");
-    dialogEl.querySelector("p").textContent = "A new rider job has been assigned to you.";
+    updateAssignmentDialog(pendingAssignments.size);
     dialogEl.dataset.blocking = "true";
     dialogEl.showModal();
     await new Promise((resolve) => {
       const ok = dialogEl.querySelector("[data-assignment-ok]");
-      const onClick = async () => {
-        ok.disabled = true;
+      const close = async () => {
+        const assignments = [...pendingAssignments.values()];
+        pendingAssignments.clear();
+        dialogEl.dataset.blocking = "false";
+        dialogEl.querySelector("p").textContent = "";
+        dialogEl.close();
+        ok.removeEventListener("click", close);
+        dialogEl.querySelector("[data-assignment-close]").removeEventListener("click", close);
+        blocking = false;
         try {
-          await markRead(notification);
-          ok.removeEventListener("click", onClick);
-          dialogEl.dataset.blocking = "false";
-          dialogEl.close();
-          resolve();
+          await Promise.all(assignments.map(markRead));
         } catch (error) {
-          toast(error.message || "Could not mark the assignment notification read.", "error");
-          ok.disabled = false;
+          toast(error.message || "Could not mark the assignment notifications read.", "error");
         }
+        resolve();
       };
-      ok.addEventListener("click", onClick);
+      ok.addEventListener("click", close);
+      dialogEl.querySelector("[data-assignment-close]").addEventListener("click", close);
     });
-    blocking = false;
     await refresh();
   }
 
@@ -455,8 +485,8 @@ function notificationDestination(item, profile) {
 function notificationLabel(type) {
   return {
     delivery_new: "New delivery request",
-    delivery_ready: "Delivery is ready for dispatch",
-    delivery_dispatched: "Delivery dispatched",
+    delivery_ready: "Delivery is ready to pack",
+    delivery_dispatched: "Delivery packed",
     delivery_delivered: "Delivery completed",
     rider_request_new: "New rider request",
     rider_request_declined: "Rider request declined",

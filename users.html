@@ -7,7 +7,7 @@
     <div class="page-heading"><div><p class="eyebrow">ADMIN WORKSPACE</p><h1>Users</h1><p class="muted">Manage accounts and access.</p></div></div>
     <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="users-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="user-tallies" class="stats-grid"></div></section>
     <section class="panel"><div class="section-heading"><h2>User management</h2></div>
-      <form id="user-create-form" class="form-grid admin-create"><label>Full name<input name="full_name" required></label><label>Username<input name="username" required></label><label>Temporary password<input name="password" type="password" required><small class="password-hint" data-password-hint>Password must be at least 8 characters.</small></label><label>Role<select name="role"><option>salesperson</option><option>designer</option><option>production</option><option>dispatch</option><option>route_admin</option><option>rider</option><option>admin</option></select></label><label class="check-line"><input type="checkbox" name="route_admin_access"> Route admin access</label><button class="primary" type="submit">Add user</button></form>
+      <form id="user-create-form" class="form-grid admin-create"><label>Full name<input name="full_name" required></label><label>Username<input name="username" required></label><label>Temporary password<div class="password-toggle-field"><input name="password" type="password" required><button type="button" class="password-toggle" data-password-toggle aria-label="Show password"><svg data-password-eye viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><svg data-password-eye-off viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8"/><path d="M9.9 5.2A10.7 10.7 0 0112 5c6.4 0 10 7 10 7a15.8 15.8 0 01-3.1 3.9M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10.7 10.7 0 004.1-.8"/></svg></button></div><small class="password-hint" data-password-hint>Password must be at least 8 characters.</small></label><label>Role<select name="role"><option>salesperson</option><option>designer</option><option>production</option><option>dispatch</option><option>route_admin</option><option>rider</option><option>admin</option></select></label><label class="check-line"><input type="checkbox" name="route_admin_access"> Route admin access</label><button class="primary" type="submit">Add user</button></form>
       <div class="table-wrap users-table"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Route admin access</th><th>Active</th><th>Actions</th></tr></thead><tbody id="user-rows"></tbody></table></div>
     </section>
   </main>
@@ -15,5 +15,19 @@
   <dialog id="view-password-dialog"><div class="section-heading"><h2>View password</h2><button type="button" class="icon-button" data-close-dialog aria-label="Close">×</button></div><p id="view-password-value" class="password-display"></p><p class="muted">This access is recorded in the audit log.</p></dialog>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
   <script src="config.js"></script><script src="js/logo.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
+  <script>
+    document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+      const input = button.parentElement.querySelector("input");
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", () => {
+        const visible = input.type === "password";
+        input.type = visible ? "text" : "password";
+        button.setAttribute("aria-label", visible ? "Hide password" : "Show password");
+        button.querySelector("[data-password-eye]").hidden = visible;
+        button.querySelector("[data-password-eye-off]").hidden = !visible;
+        input.focus({ preventScroll: true });
+      });
+    });
+  </script>
 </body>
 </html>

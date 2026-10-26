@@ -38,6 +38,7 @@ Do not open `index.html` as a `file://` URL; browser module loading and Supabase
 - `supabase/migrations/20261024000000_deliveries_riders_portal.sql`: additional roles, protected delivery and rider workflows, vehicle registry, portal notifications, and independent DL/RJ reference counters.
 - `supabase/migrations/20261025000000_route_admin_access.sql`: additive route-admin access and protected rider assignment permissions.
 - `supabase/migrations/20261026000000_password_reminders_and_live_portal.sql`: temporary-password profile state, idempotent Realtime publication setup, route-admin decline workflow and notifications, and non-blocking rider-slot conflict warnings.
+- `supabase/migrations/20261027000000_delivery_address_free_text.sql`: allow non-empty free-text delivery item addresses without a format or length restriction.
 - `supabase/functions/login/`: username login and 5-failure/15-minute lockout.
 - `supabase/functions/user-admin/`: user creation, reset, password view/audit, and first-login password change.
 
@@ -51,7 +52,7 @@ Do not open `index.html` as a `file://` URL; browser module loading and Supabase
 6. In **SQL Editor**, run `supabase/migrations/20261023000001_queue_visibility_and_completed_at.sql` to make the designer queue visible to all designers and track completion time.
 7. In **SQL Editor**, run `supabase/migrations/20261024000000_deliveries_riders_portal.sql` to add the delivery and rider workspaces, roles, RLS, triggers, and notifications.
 8. In **SQL Editor**, run `supabase/migrations/20261025000000_route_admin_access.sql` to allow route-admin access to be added to another user role and prevent duplicate active rider time slots.
-9. In **SQL Editor**, paste and run `supabase/migrations/20261026000000_password_reminders_and_live_portal.sql` to persist temporary-password reminders, enable portal table Realtime, and support rider-request declines. It can be pasted again safely.
+9. In **SQL Editor**, paste and run `supabase/migrations/20261026000000_password_reminders_and_live_portal.sql` to persist temporary-password reminders, enable portal table Realtime, and support rider-request declines. It can be pasted again safely. Then run `supabase/migrations/20261027000000_delivery_address_free_text.sql` to allow non-empty delivery addresses in free-text format.
 10. Install the Supabase CLI, authenticate, and link this project:
 
    ```sh
