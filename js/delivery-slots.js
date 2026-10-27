@@ -18,6 +18,7 @@ export function deliverySlotOptions(date, today, currentTime) {
 }
 
 export function deliverySlotLabel(start) {
+  if (!start || start === "any") return "Any time";
   const slot = hourlySlots().find((item) => item.start === String(start || "").slice(0, 5));
   return slot?.label || "—";
 }

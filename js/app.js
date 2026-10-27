@@ -750,11 +750,19 @@ function sortRows(rows) {
       if (!Number.isFinite(rightDate)) return -1;
       comparison = leftDate - rightDate;
     } else if (activeSort.key === "delivery_schedule") {
-      const leftDate = left.delivery_date && left.delivery_time ? Date.parse(`${left.delivery_date}T${left.delivery_time}`) : NaN;
-      const rightDate = right.delivery_date && right.delivery_time ? Date.parse(`${right.delivery_date}T${right.delivery_time}`) : NaN;
-      if (!Number.isFinite(leftDate)) return Number.isFinite(rightDate) ? 1 : 0;
-      if (!Number.isFinite(rightDate)) return -1;
-      comparison = leftDate - rightDate;
+      const leftDay = left.delivery_date ? Date.parse(`${left.delivery_date}T00:00:00`) : NaN;
+      const rightDay = right.delivery_date ? Date.parse(`${right.delivery_date}T00:00:00`) : NaN;
+      if (!Number.isFinite(leftDay)) return Number.isFinite(rightDay) ? 1 : 0;
+      if (!Number.isFinite(rightDay)) return -1;
+      if (leftDay !== rightDay) {
+        comparison = leftDay - rightDay;
+      } else {
+        const leftTime = left.delivery_time ? Date.parse(`${left.delivery_date}T${left.delivery_time}`) : NaN;
+        const rightTime = right.delivery_time ? Date.parse(`${right.delivery_date}T${right.delivery_time}`) : NaN;
+        if (!Number.isFinite(leftTime)) return Number.isFinite(rightTime) ? 1 : 0;
+        if (!Number.isFinite(rightTime)) return -1;
+        comparison = leftTime - rightTime;
+      }
     }
     return comparison * direction;
   });
@@ -1927,7 +1935,7 @@ function updateDeliverySlotOptions() {
   const date = form.elements.delivery_date.value;
   const selected = select.value;
   const current = date === today ? currentNairobiTime() : "";
-  select.innerHTML = '<option value="">Choose hourly slot</option>' + deliverySlotOptions(date, today, current).map((slot) =>
+  select.innerHTML = '<option value="">Choose hourly slot</option><option value="any">Any time</option>' + deliverySlotOptions(date, today, current).map((slot) =>
     `<option value="${slot.start}"${slot.disabled ? " disabled" : ""}>${escapeHtml(slot.label)}</option>`
   ).join("");
   if ([...select.options].some((option) => option.value === selected && !option.disabled)) select.value = selected;
@@ -2051,8 +2059,8 @@ async function submitDelivery(event) {
     toast("Delivery date cannot be in the past.", "error");
     return;
   }
-  if (!hourlySlots().some((slot) => slot.start === payload.delivery_time)
-    || payload.delivery_date === today && payload.delivery_time <= currentNairobiTime()) {
+  if (payload.delivery_time !== "any" && (!hourlySlots().some((slot) => slot.start === payload.delivery_time)
+    || payload.delivery_date === today && payload.delivery_time <= currentNairobiTime())) {
     toast("Choose an available one-hour delivery slot.", "error");
     return;
   }
@@ -2064,7 +2072,7 @@ async function submitDelivery(event) {
       contact_name: payload.contact_name.trim(),
       contact_number: payload.contact_number.trim(),
       items,
-      delivery_time: payload.delivery_time,
+      delivery_time: payload.delivery_time === "any" ? null : payload.delivery_time,
       delivery_date: payload.delivery_date,
       special_instruction: payload.special_instruction.trim() || null
     }).select("id,ref_no").single();
@@ -2180,7 +2188,7 @@ function renderDeliveryRows() {
   const filtered = sortRows(deliveryRows.filter((row) => !query
     || `${row.ref_no} ${row.client_name} ${row.contact_name}`.toLowerCase().includes(query)));
   tbody.innerHTML = filtered.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}">
-    <td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date)}${row.delivery_time ? `<br>${escapeHtml(deliverySlotLabel(row.delivery_time))}` : ""}</td>
+    <td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date)}<br>${escapeHtml(deliverySlotLabel(row.delivery_time))}</td>
     <td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td>
     <td>${escapeHtml(row.client_name)}<br><span class="muted">${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</span></td>
     <td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View items">${deliveryItemSummary(row.items)}</td>
