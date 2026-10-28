@@ -1158,7 +1158,6 @@ function requestFormMarkup(row = null) {
     <div class="line-field-label"><span>Branding</span>${brandingFieldMarkup(row?.branding_details)}</div>
     <label class="check-line"><input name="high_res_logo" type="checkbox" ${row?.high_res_logo ? "checked" : ""}> High resolution logo</label>
     <label class="check-line"><input name="redesign_logo" type="checkbox" ${row?.redesign_logo ? "checked" : ""}> Redesign logo</label>
-    ${editing ? "" : `<p class="muted wide">The legacy SO field stores “${SO_REFERENCE_PLACEHOLDER}”; the Reference type is shown in the tracker.</p>`}
     <label class="wide">Additional information<textarea name="additional_info" rows="2">${escapeHtml(row?.additional_info)}</textarea></label>
     <label>Date needed<input name="date_needed" type="date" min="${today}" value="${escapeHtml(row?.date_needed || "")}" required></label>
     <label>Designer preferred<select name="preferred_designer"><option value="">Any</option>${designers}</select></label>
