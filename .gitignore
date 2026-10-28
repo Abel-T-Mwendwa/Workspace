@@ -2,3 +2,5 @@
 .env.*
 !.env.example
 node_modules/
+qa/QA_REFERENCE.md
+qa/QA_REPORT.md

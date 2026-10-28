@@ -70,12 +70,21 @@ Deno.serve(async (request) => {
       const password = typeof body.password === "string" ? body.password : "";
       const role = body.role;
       const routeAdminAccess = role === "route_admin" || body.route_admin_access === true;
+      const productionStoreAccess = role === "production_store" || body.production_store_access === true;
+      const riderRequestAccess = role === "user" || body.rider_request_access === true;
       if (password.length < 8) return response({ error: "Password must contain at least 8 characters." }, 400);
       if (password.length > 1024) return response({ error: "Password is too long." }, 400);
-      if (!/^[A-Za-z0-9._-]{1,64}$/.test(username) || !fullName || fullName.length > 160
-        || (body.route_admin_access !== undefined && typeof body.route_admin_access !== "boolean")
-        || !["salesperson", "designer", "admin", "production", "dispatch", "route_admin", "rider"].includes(role)) {
-        return response({ error: "Enter a valid name, username, and role." }, 400);
+      if (!fullName || fullName.length > 160) return response({ error: "Enter a valid full name." }, 400);
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(username)) {
+        return response({ error: "Username must contain 1–64 letters, numbers, dots, underscores or hyphens." }, 400);
+      }
+      if (!["salesperson", "designer", "admin", "production", "production_store", "dispatch", "route_admin", "rider", "user"].includes(role)) {
+        return response({ error: "Choose a valid role." }, 400);
+      }
+      if ((body.route_admin_access !== undefined && typeof body.route_admin_access !== "boolean")
+        || (body.production_store_access !== undefined && typeof body.production_store_access !== "boolean")
+        || (body.rider_request_access !== undefined && typeof body.rider_request_access !== "boolean")) {
+        return response({ error: "Access flags must be true or false." }, 400);
       }
       const email = `${username.toLowerCase()}@promokings.local`;
       const { data: created, error: createError } = await service.auth.admin.createUser({
@@ -85,7 +94,9 @@ Deno.serve(async (request) => {
       if (createError || !created.user) return response({ error: createError?.message || "Could not create user." }, 400);
       const { error: profileError } = await service.from("profiles").insert({
         id: created.user.id, username, full_name: fullName, role, active: true,
-        route_admin_access: routeAdminAccess, password_change_required: true
+        route_admin_access: routeAdminAccess, production_store_access: productionStoreAccess,
+        rider_request_access: riderRequestAccess,
+        password_change_required: true
       });
       if (profileError) {
         const { error: rollbackError } = await service.auth.admin.deleteUser(created.user.id);

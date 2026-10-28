@@ -8,14 +8,17 @@
     <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="admin-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="admin-tallies" class="stats-grid"></div></section>
     <section class="panel"><div class="section-heading"><h2>All artwork</h2><button id="export-csv" class="secondary">Export filtered CSV</button></div>
       <div class="filter-grid"><select id="filter-sales"><option value="">All salespeople</option></select><select id="filter-designer"><option value="">All designers</option></select><select id="filter-status"><option value="">All statuses</option><option>Requested</option><option>In progress</option><option>Change requested</option><option>Done</option></select><select id="filter-category"><option value="">All categories</option><option>New client</option><option>Old client</option></select><input id="filter-from" type="date" aria-label="Created from"><input id="filter-to" type="date" aria-label="Created to"><input id="admin-search" placeholder="Ref no or client"></div>
-      <div class="table-wrap"><table><thead><tr><th data-sort="ref_no">Ref no</th><th>Client / SO</th><th>Salesperson</th><th>Designer preferred</th><th>Category</th><th>Product</th><th>Branding</th><th>Created</th><th>Needed</th><th>Status</th><th>Manage</th></tr></thead><tbody id="admin-rows"></tbody></table></div><p id="admin-empty" class="empty-state hidden">No requests match these filters.</p>
+      <div class="table-wrap"><table><thead><tr><th data-sort="ref_no">Ref no</th><th>Client</th><th>Reference</th><th>Salesperson</th><th>Designer preferred</th><th>Category</th><th>Product</th><th>Branding</th><th>Created</th><th>Needed</th><th>Status</th><th>Manage</th></tr></thead><tbody id="admin-rows"></tbody></table></div><p id="admin-empty" class="empty-state hidden">No requests match these filters.</p>
     </section>
   </main>
   <dialog id="admin-edit-dialog"><form id="admin-edit-form" method="dialog"><div class="section-heading"><h2>Edit artwork</h2><button type="button" class="icon-button" data-close-dialog aria-label="Close">×</button></div>
     <input type="hidden" name="id"><div class="form-grid">
       <label>Reference<input name="ref_no" readonly></label><label>SR<input name="sr" readonly></label>
       <label>Category<select name="category"><option>New client</option><option>Old client</option></select></label>
-      <label>Client<input name="client_name" required></label><label>SO number<input name="so_number" required></label>
+      <label>Client<input name="client_name" required></label>
+      <label>Reference<input name="display_reference" readonly></label>
+      <label>Reference type<select name="reference_type"><option value="">Legacy entry</option><option value="new">New artwork</option><option value="old">Old artwork</option></select></label>
+      <label data-previous-reference-field>Previous artwork reference no<input name="previous_reference"></label>
       <div class="line-field-label"><span>Product with code and colour</span><div class="line-field-slot" data-line-slot="product"></div></div>
       <div class="line-field-label"><span>Branding</span><div class="line-field-slot" data-branding-slot="branding_details"></div></div>
       <label>Designer preferred<select name="preferred_designer"></select></label>

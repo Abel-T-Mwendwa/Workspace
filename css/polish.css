@@ -615,6 +615,13 @@ textarea:focus {
   transition: none;
 }
 
+.delivery-table-actions button[data-delivery-delete] {
+  min-width: 0;
+  height: auto;
+  padding: 5px 6px;
+  font-size: 10px;
+}
+
 .delivery-table-actions .dispatch-controls {
   flex: 1 1 150px;
   min-width: min(150px, 100%);
@@ -828,9 +835,76 @@ textarea:focus {
 }
 
 .table-wrap {
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
+}
+
+.row-slider-table {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  contain: inline-size;
+  background: #fff;
+}
+
+.row-slider-table thead,
+.row-slider-table tbody {
+  display: block;
+  width: 100%;
+}
+
+.row-slider-table thead tr {
+  display: grid;
+  width: 100%;
+  grid-template-columns: var(--row-slider-template);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  scrollbar-width: thin;
+}
+
+.row-slider-table th {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.row-slider-table tbody tr {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: var(--row-slider-template);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  scrollbar-width: thin;
+}
+
+.row-slider-table tbody td {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.row-slider-table tbody td:has(input[type="checkbox"]) {
+  text-align: center;
+}
+
+.row-slider-table tbody td:has(.table-actions) {
+  white-space: nowrap;
+}
+
+.row-slider-table tbody td:has(.table-actions) .table-actions {
+  width: max-content;
+}
+
+.row-slider-table tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
 }
 
 dialog {
@@ -1857,6 +1931,75 @@ dialog.temporary-password-dialog[open] {
 
 .portal-new-row {
   animation: portal-row-highlight 2.5s ease-out;
+}
+
+.designer-search-panel .designer-search-control {
+  position: relative;
+}
+
+#designer-search {
+  width: 100%;
+  padding-right: 44px;
+}
+
+#designer-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+}
+
+.designer-change-request {
+  width: 100%;
+  padding: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.designer-change-request:hover {
+  background: #f3edff;
+  color: #693be4;
+}
+
+#designer-change-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 24px));
+  max-height: 80vh;
+  padding: 22px;
+  border-radius: 16px;
+}
+
+#designer-change-dialog .designer-change-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+#designer-change-title {
+  margin: 0;
+  color: var(--navy);
+  font-size: 17px;
+}
+
+#designer-change-dialog .designer-change-body {
+  min-height: 0;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 4px 2px;
+  font-size: 16px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 @keyframes portal-row-highlight {

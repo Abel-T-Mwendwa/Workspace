@@ -65,6 +65,7 @@ export function validateRiderRequestSlot(date, time, now = new Date()) {
       : "Requests after 12:30 PM must be scheduled for tomorrow or later.";
   }
   if (!time) return "Choose an expected time.";
+  if (time === "any") return "";
   if (!availability.availableSlots.some(([slot]) => slot === time)) {
     return availability.hint || "That expected time is no longer available. Choose another date or time.";
   }

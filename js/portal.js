@@ -4,8 +4,10 @@ const NAV = {
   ],
   designer: [["Home", "home.html"], ["Artworks", "designer.html"]],
   production: [["Home", "home.html"], ["Deliveries", "deliveries.html"]],
+  production_store: [["Home", "home.html"], ["Production store", "production-store.html"]],
   dispatch: [["Home", "home.html"], ["Deliveries", "deliveries.html"], ["Vehicles", "vehicles.html"]],
   route_admin: [["Home", "home.html"], ["Route admin", "route-admin.html"]],
+  user: [["Riders", "riders.html"]],
   rider: [["Home", "home.html"], ["My jobs", "my-jobs.html"]],
   admin: [
     ["Home", "home.html"], ["Artworks", "admin.html"], ["Users", "users.html"],
@@ -17,6 +19,7 @@ const HOME_CATEGORIES = {
   salesperson: ["Artworks", "Deliveries", "Riders"],
   designer: ["Artworks"],
   production: ["Deliveries"],
+  production_store: ["Deliveries"],
   dispatch: ["Deliveries", "Vehicles"],
   route_admin: ["Riders"],
   rider: ["My jobs"],
@@ -48,13 +51,24 @@ export function hasRouteAdminAccess(profile) {
   return profile.role === "admin" || profile.role === "route_admin" || profile.route_admin_access === true;
 }
 
+export function hasProductionStoreAccess(profile) {
+  return profile.role === "production_store" || profile.production_store_access === true;
+}
+
+export function hasRiderRequestAccess(profile) {
+  return profile.role === "user" || profile.role === "salesperson" || profile.rider_request_access === true;
+}
+
 function pageAllowed(page, profile) {
   const { role } = profile;
+  if (role === "user") return page === "riders.html";
+  if (page === "production-store.html") return hasProductionStoreAccess(profile);
   if (role === "admin") return page !== "my-jobs.html";
   const rolePages = {
     salesperson: ["home.html", "sales.html", "deliveries.html", "riders.html"],
     designer: ["home.html", "designer.html"],
     production: ["home.html", "deliveries.html"],
+    production_store: ["home.html"],
     dispatch: ["home.html", "deliveries.html", "vehicles.html"],
     rider: ["home.html", "my-jobs.html"],
     route_admin: ["home.html", "route-admin.html"]
@@ -62,6 +76,7 @@ function pageAllowed(page, profile) {
   if (page === "users.html") return false;
   return rolePages[role]?.includes(page) === true
     || (page === "riders.html" && hasRouteAdminAccess(profile))
+    || (page === "riders.html" && hasRiderRequestAccess(profile))
     || (page === "route-admin.html" && hasRouteAdminAccess(profile));
 }
 
@@ -78,6 +93,12 @@ export async function initPortal(client, profile, page, toast) {
   if (!header) return;
 
   const tabs = [...(NAV[profile.role] || [])];
+  if (hasProductionStoreAccess(profile) && !tabs.some(([, href]) => href === "production-store.html")) {
+    tabs.push(["Production store", "production-store.html"]);
+  }
+  if (hasRiderRequestAccess(profile) && !tabs.some(([, href]) => href === "riders.html")) {
+    tabs.push(["Riders", "riders.html"]);
+  }
   if (profile.role === "salesperson" && hasRouteAdminAccess(profile)
     && !tabs.some(([, href]) => href === "route-admin.html")) {
     tabs.push(["Route admin", "route-admin.html"]);
@@ -182,7 +203,9 @@ function ensurePortalDialogs() {
 
 async function queryHomeRows(client, profile, category) {
   const config = HOME_CONFIG[category];
-  let query = client.from(config.table).select(config.select);
+  const table = category === "Deliveries" && ["production", "dispatch", "production_store"].includes(profile.role)
+    ? "deliveries_role_safe" : config.table;
+  let query = client.from(table).select(config.select);
   if (category === "My jobs") query = query.eq("assigned_rider", profile.id);
   const { data, error } = await query.order("created_at", { ascending: false }).limit(20);
   if (error) throw error;
@@ -224,7 +247,7 @@ function homeDateMatch(row, category, filter) {
 
 function homeTabHref(category, profile) {
   if (category === "Artworks") return profile.role === "designer" ? "designer.html" : profile.role === "admin" ? "admin.html" : "sales.html";
-  if (category === "Deliveries") return "deliveries.html";
+  if (category === "Deliveries") return profile.role === "production_store" ? "production-store.html" : "deliveries.html";
   if (category === "Vehicles") return "vehicles.html";
   if (category === "My jobs") return "my-jobs.html";
   if (category === "Riders" && ["admin", "route_admin"].includes(profile.role)) return "route-admin.html";
@@ -485,6 +508,7 @@ function notificationDestination(item, profile) {
 function notificationLabel(type) {
   return {
     delivery_new: "New delivery request",
+    delivery_goods_status: "Production store request submitted or updated",
     delivery_ready: "Delivery is ready to pack",
     delivery_dispatched: "Delivery packed",
     delivery_delivered: "Delivery completed",

@@ -6,7 +6,8 @@ const message = document.querySelector("#login-message");
 
 const routes = {
   salesperson: "home.html", designer: "home.html", admin: "home.html",
-  production: "home.html", dispatch: "home.html", route_admin: "home.html", rider: "home.html"
+  production: "home.html", production_store: "home.html", dispatch: "home.html", route_admin: "home.html", rider: "home.html",
+  user: "riders.html"
 };
 const LOGIN_AT_KEY = "loginAt";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;

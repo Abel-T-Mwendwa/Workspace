@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="application-name" content="Workspace"><title>Production store | Promo Kings Workspace</title><link rel="icon" href="images/promo-kings-logo.svg"><link rel="stylesheet" href="css/styles.css"><link rel="stylesheet" href="css/polish.css"></head>
+<body>
+  <header id="app-header" class="topbar"></header>
+  <main class="page">
+    <div class="page-heading"><div><p class="eyebrow">DELIVERY WORKSPACE</p><h1>Production store</h1><p class="muted">Enter goods that are ready for delivery.</p></div></div>
+    <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="delivery-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="delivery-tallies" class="stats-grid"></div></section>
+    <section class="panel" id="delivery-request-panel">
+      <div class="section-heading"><h2>New delivery request</h2><button type="button" class="secondary" id="delivery-form-toggle">New request</button></div>
+      <form id="delivery-request-form" class="request-form form-grid hidden">
+        <label id="delivery-salesperson-field">Salesperson<select name="salesperson_id" required><option value="">Choose salesperson</option></select></label>
+        <label>Client name<input name="client_name" maxlength="160"></label>
+        <label>Contact name<input name="contact_name" maxlength="160"></label>
+        <label>Contact number<input name="contact_number" type="tel" maxlength="32" placeholder="+254 700 000 000"></label>
+        <div class="wide item-lines-field"><span>Item details</span><button type="button" class="line-field-box" id="delivery-items-open" aria-haspopup="dialog">Click to add item details</button><input type="hidden" name="items" value="[]"></div>
+        <label>Delivery time<select name="delivery_time"><option value="">Choose hourly slot</option></select></label>
+        <label>Delivery date<input name="delivery_date" type="date"></label>
+        <label class="wide">Special instruction<textarea name="special_instruction" rows="2" maxlength="1000"></textarea></label>
+        <div class="form-actions wide"><button type="reset" class="quiet">Clear</button><button type="submit" class="primary">Request</button></div>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><h2>Delivery requests</h2><select id="delivery-status-filter" aria-label="Filter deliveries"><option value="">All deliveries</option><option>Not ready</option><option>Ready</option><option>Not delivered</option><option>Delivered</option></select></div>
+      <div class="toolbar"><input id="delivery-search" placeholder="Search reference or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
+      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th data-sort="ref_no">Ref no</th><th data-sort="created_at">Requested</th><th>Client / contact</th><th>Items</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <p id="delivery-empty" class="empty-state hidden">No delivery requests found.</p>
+    </section>
+  </main>
+  <dialog id="delivery-items-dialog" class="line-editor-dialog delivery-items-dialog">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2>Item details</h2><button type="button" class="icon-button" data-items-close aria-label="Close">×</button></div>
+      <div id="delivery-item-lines" class="line-dialog-list"></div>
+      <p id="delivery-items-message" class="form-message" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" id="delivery-item-add" data-shortcut-add>Add line</button><button type="button" class="quiet" id="delivery-item-discard">Discard</button><button type="button" class="primary" id="delivery-item-save" data-shortcut-save>Save changes</button></div>
+    </div>
+  </dialog>
+  <dialog id="delivery-items-view-dialog" class="line-editor-dialog delivery-items-dialog">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2>Items</h2><button type="button" class="icon-button" data-items-view-close aria-label="Close">×</button></div>
+      <div id="delivery-items-view-content" class="table-wrap"></div>
+      <div class="dialog-actions"><button type="button" class="primary" data-items-view-close>Close</button></div>
+    </div>
+  </dialog>
+  <dialog id="delivery-view-dialog"><div class="section-heading"><h2>Delivery details</h2><button type="button" class="icon-button" data-delivery-view-close aria-label="Close">×</button></div><div id="delivery-view-content"></div></dialog>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
+</body>
+</html>
