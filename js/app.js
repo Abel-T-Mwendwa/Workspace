@@ -6,9 +6,8 @@ import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot }
 const client = window.supabase.createClient(window.APP_CONFIG.supabaseUrl, window.APP_CONFIG.supabaseAnonKey, {
   auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
 });
-document.querySelector("#history-dialog [data-close-dialog]").addEventListener("click", () => {
-  document.querySelector("#history-dialog").close();
-});
+const historyDialog = document.querySelector("#history-dialog");
+historyDialog?.querySelector("[data-close-dialog]")?.addEventListener("click", () => historyDialog.close());
 const page = location.pathname.split("/").pop();
 const LOGIN_AT_KEY = "loginAt";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
