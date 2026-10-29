@@ -6,6 +6,9 @@ import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot }
 const client = window.supabase.createClient(window.APP_CONFIG.supabaseUrl, window.APP_CONFIG.supabaseAnonKey, {
   auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
 });
+document.querySelector("#history-dialog [data-close-dialog]").addEventListener("click", () => {
+  document.querySelector("#history-dialog").close();
+});
 const page = location.pathname.split("/").pop();
 const LOGIN_AT_KEY = "loginAt";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
@@ -16,6 +19,7 @@ let allRows = [];
 let allChanges = [];
 let users = [];
 let deliveryRows = [];
+let deliveryTotalCount = 0;
 let assignedPendingDeliveries = [];
 let vehicleRows = [];
 let riderJobRows = [];
@@ -25,6 +29,8 @@ let riderOffset = 0;
 let riderQueryToken = 0;
 let riderUsers = [];
 let requesterNames = new Map();
+let routeRiderTotalCount = 0;
+const ROUTE_RIDER_FILTERS_KEY = "routeRiderFilters";
 let activeRiderJobCount = 0;
 let deliveryItemsState = { initial: [], lines: [] };
 let deliveryEditId = null;
@@ -810,7 +816,7 @@ function bindSortableHeaders() {
 }
 
 function statusBadge(status) {
-  const className = status === "Done" ? "done" : status === "In progress" ? "progress" : status === "Change requested" ? "change" : "requested";
+  const className = status === "Done" || status === "Change done" ? "done" : status === "In progress" ? "progress" : status === "Change requested" ? "change" : "requested";
   return `<span class="badge ${className}">${escapeHtml(status)}</span>`;
 }
 
@@ -1018,7 +1024,7 @@ function renderSales() {
       <button class="secondary" data-change="${escapeHtml(row.id)}">Change</button>
       <button class="quiet" data-edit="${escapeHtml(row.id)}" ${row.status !== "Requested" ? "disabled" : ""}>Edit</button>
     </div></td></tr>`).join("");
-  initializeTableRowSliders(tbody.closest("table"));
+  initializeScrollableTables(tbody.closest("table"));
   document.querySelector("#sales-empty").classList.toggle("hidden", rows.length > 0);
   updateSortIndicators();
   tbody.querySelectorAll("[data-done-time]").forEach((button) => button.addEventListener("click", () => {
@@ -1389,6 +1395,8 @@ async function renderDesigner() {
     const assignedIds = new Set(assignmentNotifications.map((notice) => notice.artwork_id));
     const byArtwork = new Map();
     openChanges.forEach((change) => byArtwork.set(change.artwork_id, [...(byArtwork.get(change.artwork_id) || []), change]));
+    const allChangesByArtwork = new Map();
+    allChanges.forEach((change) => allChangesByArtwork.set(change.artwork_id, [...(allChangesByArtwork.get(change.artwork_id) || []), change]));
     const filter = document.querySelector("#designer-filter").value;
     const searchTerm = document.querySelector("#designer-search").value.replace(/\s+/g, " ").trim().toLowerCase();
     const filtered = sortRows(rows.filter((row) => {
@@ -1400,30 +1408,39 @@ async function renderDesigner() {
       if (filter === "pending") return row.status !== "Done";
       if (filter === "done") return row.status === "Done";
       if (filter === "changes") return byArtwork.has(row.id);
+      if (filter === "changes-done") {
+        const changes = allChangesByArtwork.get(row.id) || [];
+        return changes.length > 0 && changes.every((change) => change.status === "done");
+      }
       if (filter === "assignments") return assignedIds.has(row.id) && row.assigned_designer === profile.id;
       return true;
     }));
     const tbody = document.querySelector("#designer-rows");
     tbody.innerHTML = filtered.map((row) => {
-      const changes = byArtwork.get(row.id) || [];
+      const changes = allChangesByArtwork.get(row.id) || [];
+      const pendingChanges = changes.filter((change) => change.status !== "done");
       const otherDetails = [row.category, row.additional_info].filter(Boolean).map(escapeHtml).join(" · ");
       const claimed = row.assigned_designer === profile.id && row.status === "In progress";
       const canStart = row.status !== "Done" && row.status !== "In progress"
         && (row.assigned_designer === null || row.assigned_designer === profile.id);
       return `<tr data-entry-id="${escapeHtml(row.id)}"><td><strong>${escapeHtml(row.ref_no)}</strong><br>${escapeHtml(row.client_name)}</td>
-        <td>${escapeHtml(artworkReferenceLabel(row))}</td><td>${localDate(row.date_needed)}</td><td><div class="designer-line-fields">${lineFieldMarkup("product", row.product, { mode: "view" })}${brandingFieldMarkup(row.branding_details, { mode: "view" })}</div>
-        <p>${otherDetails}</p></td><td>${escapeHtml(profileName(row.created_by))}</td>
+        <td>${escapeHtml(artworkReferenceLabel(row))}</td><td>${localDate(row.date_needed)}</td><td>${escapeHtml(profileName(row.created_by))}</td>
+        <td><div class="designer-line-fields">${lineFieldMarkup("product", row.product, { mode: "view" })}${brandingFieldMarkup(row.branding_details, { mode: "view" })}</div>
+        <p>${otherDetails}</p></td>
         <td>${statusBadge(row.status)}</td>
-        <td>${changes.filter((change) => change.change_text?.trim()).map((change) => `<div class="change-item"><button type="button" class="designer-change-request" data-change-request title="Click to view" aria-haspopup="dialog">${escapeHtml(change.change_text)}</button><small>${escapeHtml(change.requested_by)} · ${localDate(change.requested_on)}</small></div>`).join("") || "—"}</td>
+        <td>${changes.length === 0 ? "—" : pendingChanges.length === 0
+          ? statusBadge("Change done")
+          : `${statusBadge("Change requested")}${pendingChanges.filter((change) => change.change_text?.trim()).map((change) => `<div class="change-item"><button type="button" class="designer-change-request" data-change-request title="Click to view" aria-haspopup="dialog">${escapeHtml(change.change_text)}</button><small>${escapeHtml(change.requested_by)} · ${localDate(change.requested_on)}</small></div>`).join("")}`}</td>
         <td><textarea data-notes="${escapeHtml(row.id)}" rows="2" placeholder="Designer notes or final file URL" ${claimed ? "" : "disabled"}>${escapeHtml(row.designer_notes)}</textarea></td>
         <td>${escapeHtml(preferredDesignerName(row))}${assignedIds.has(row.id) ? '<br><span class="badge assignment-badge">New assignment</span>' : ""}</td>
         <td><div class="table-actions">${canStart ? `<button class="primary" data-start="${escapeHtml(row.id)}">Start</button>` : ""}
         ${claimed && row.status !== "Done" ? `<button class="secondary" data-done="${escapeHtml(row.id)}">Done</button>` : ""}
-        ${claimed ? `<button class="quiet" data-notes-save="${escapeHtml(row.id)}">Save notes</button>` : ""}</div></td></tr>`;
+        ${claimed ? `<button class="quiet" data-notes-save="${escapeHtml(row.id)}">Save notes</button>` : ""}
+        <button class="secondary" data-history="${escapeHtml(row.id)}">History</button></div></td></tr>`;
     }).join("");
-    initializeTableRowSliders(tbody.closest("table"));
+    initializeScrollableTables(tbody.closest("table"));
     const emptyState = document.querySelector("#designer-empty");
-    emptyState.textContent = searchTerm ? "No jobs match your search" : "No jobs match this filter.";
+    emptyState.textContent = "No jobs match this filter";
     emptyState.classList.toggle("hidden", filtered.length > 0);
     updateSortIndicators();
     document.querySelector("#change-banner").classList.toggle("hidden", openChanges.length === 0);
@@ -1439,6 +1456,7 @@ async function renderDesigner() {
       const notes = tbody.querySelector(`[data-notes="${CSS.escape(button.dataset.notesSave)}"]`).value;
       updateArtwork(button.dataset.notesSave, { designer_notes: notes }, button, "Notes saved.");
     }));
+    tbody.querySelectorAll("[data-history]").forEach((button) => button.addEventListener("click", () => showHistory(button.dataset.history)));
   } catch (error) {
     toast(error.message || "Could not load the designer queue.", "error");
   }
@@ -1572,7 +1590,7 @@ function renderAdminRows() {
     <td>${lineFieldMarkup("product", row.product, { recordId: row.id, direct: true })}</td>
     <td>${brandingFieldMarkup(row.branding_details, { recordId: row.id, direct: true })}</td>
     <td>${localDate(row.created_at)}</td><td>${localDate(row.date_needed)}</td><td>${statusBadge(row.status)}</td><td><button class="secondary" data-admin-edit="${escapeHtml(row.id)}">Edit</button></td></tr>`).join("");
-  initializeTableRowSliders(tbody.closest("table"));
+  initializeScrollableTables(tbody.closest("table"));
   document.querySelector("#admin-empty").classList.toggle("hidden", rows.length > 0);
   updateSortIndicators();
   tbody.querySelectorAll("[data-admin-edit]").forEach((button) => button.addEventListener("click", () => openAdminEdit(allRows.find((row) => row.id === button.dataset.adminEdit))));
@@ -1850,16 +1868,32 @@ async function createUser(event) {
 }
 
 function renderUsers() {
-  const roleOptions = ["salesperson", "designer", "production", "production_store", "dispatch", "route_admin", "rider", "user", "admin"];
-  document.querySelector("#user-rows").innerHTML = users.map((user) => `<tr><td>${escapeHtml(user.full_name)}</td><td>${escapeHtml(user.username)}</td>
-    <td><select data-role="${escapeHtml(user.id)}">${roleOptions.map((role) => `<option value="${role}"${user.role === role ? " selected" : ""}>${role === "production_store" ? "Production store" : role === "user" ? "User" : role}</option>`).join("")}</select></td>
+  const roleOptions = [...document.querySelector("#user-create-form [name='role']").options]
+    .map((option) => ({ value: option.value, label: option.textContent }));
+  const roleFilter = document.querySelector("#users-role-filter");
+  if (roleFilter.options.length === 1) {
+    roleFilter.innerHTML += roleOptions.map((role) =>
+      `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`
+    ).join("");
+  }
+  const search = document.querySelector("#users-search").value.trim().toLowerCase();
+  const selectedRole = roleFilter.value;
+  const activeFilter = document.querySelector("#users-active-filter").value;
+  const filteredUsers = users.filter((user) =>
+    (!search || `${user.full_name} ${user.username}`.toLowerCase().includes(search))
+    && (!selectedRole || user.role === selectedRole)
+    && (!activeFilter || user.active === (activeFilter === "active")));
+  document.querySelector("#users-results-count").textContent = `Showing ${filteredUsers.length} ${filteredUsers.length === 1 ? "user" : "users"}`;
+  document.querySelector("#users-empty").classList.toggle("hidden", filteredUsers.length > 0);
+  document.querySelector("#user-rows").innerHTML = filteredUsers.map((user) => `<tr><td>${escapeHtml(user.full_name)}</td><td>${escapeHtml(user.username)}</td>
+    <td><select data-role="${escapeHtml(user.id)}">${roleOptions.map((role) => `<option value="${escapeHtml(role.value)}"${user.role === role.value ? " selected" : ""}>${escapeHtml(role.label)}</option>`).join("")}</select></td>
     <td><input type="checkbox" data-route-admin="${escapeHtml(user.id)}" ${user.route_admin_access || user.role === "route_admin" || user.role === "admin" ? "checked" : ""} ${user.role === "route_admin" || user.role === "admin" ? "disabled" : ""} aria-label="Route admin access for ${escapeHtml(user.full_name)}"></td>
     <td><input type="checkbox" data-production-store="${escapeHtml(user.id)}" ${user.production_store_access || user.role === "production_store" ? "checked" : ""} ${user.role === "production_store" ? "disabled" : ""} aria-label="Production store access for ${escapeHtml(user.full_name)}"></td>
     <td><input type="checkbox" data-rider-request="${escapeHtml(user.id)}" ${user.rider_request_access || user.role === "user" ? "checked" : ""} ${user.role === "user" ? "disabled" : ""} aria-label="Rider request access for ${escapeHtml(user.full_name)}"></td>
     <td><input type="checkbox" data-active="${escapeHtml(user.id)}" ${user.active ? "checked" : ""} aria-label="Active"></td><td><div class="table-actions">
     <button class="secondary" data-reset="${escapeHtml(user.id)}">Reset password</button><button class="quiet" data-view-password="${escapeHtml(user.id)}">View password</button>
     ${profile?.role === "admin" ? `<button class="danger" data-delete-user="${escapeHtml(user.id)}" ${user.id === profile.id || user.role === "admin" && users.filter((entry) => entry.role === "admin").length <= 1 ? "disabled" : ""}>Delete user</button>` : ""}</div></td></tr>`).join("");
-  initializeTableRowSliders(document.querySelector("#user-rows").closest("table"));
+  initializeScrollableTables(document.querySelector("#user-rows").closest("table"));
   document.querySelectorAll("[data-role]").forEach((select) => select.addEventListener("change", () => updateUser(select.dataset.role, { role: select.value }, select)));
   document.querySelectorAll("[data-route-admin]").forEach((input) => input.addEventListener("change", () =>
     updateUser(input.dataset.routeAdmin, { route_admin_access: input.checked }, input)));
@@ -1940,6 +1974,15 @@ async function initUsers() {
   await loadUsers();
   renderUsers();
   renderUserTallies();
+  document.querySelector("#users-search").addEventListener("input", renderUsers);
+  document.querySelector("#users-role-filter").addEventListener("change", renderUsers);
+  document.querySelector("#users-active-filter").addEventListener("change", renderUsers);
+  document.querySelector("#users-clear-filters").addEventListener("click", () => {
+    document.querySelector("#users-search").value = "";
+    document.querySelector("#users-role-filter").value = "";
+    document.querySelector("#users-active-filter").value = "";
+    renderUsers();
+  });
   document.querySelector("#users-period").addEventListener("change", renderUserTallies);
   document.querySelector("#user-create-form").addEventListener("submit", createUser);
   document.querySelector("#password-form").addEventListener("submit", resetPassword);
@@ -1997,7 +2040,7 @@ function bindLogoutHandlers() {
 }
 
 async function bootstrap() {
-  initializeTableRowSliders();
+  initializeScrollableTables();
   try {
     const { data: { session: activeSession } } = await client.auth.getSession();
     session = activeSession;
@@ -2053,6 +2096,8 @@ async function bootstrap() {
 
 const deliverySelect = "id,sr,ref_no,created_at,created_by,salesperson_id,handoff_status,goods_status,client_name,contact_name,contact_number,items,delivery_time,delivery_time_any,delivery_date,special_instruction,production_status,dispatch_status,ready_at,dispatched_at,delivered_at,transport,vehicle_id";
 const PAGE_SIZE = 20;
+const DELIVERY_FILTERS_KEY = "deliveryFilters";
+let deliverySalespersonNames = new Map();
 
 function isProductionStoreMode() {
   return page === "production-store.html";
@@ -2060,7 +2105,7 @@ function isProductionStoreMode() {
 
 let tableRowSliderObserver;
 
-function rowSliderColumnWidth(header, index) {
+function tableColumnWidth(header, index) {
   const label = header.textContent.trim().toLowerCase();
   if (index === 0 && /^(sr|#|no\.?)(\s*\/.*)?$/.test(label)) return 82;
   if (index === 0 && /^ref(\s+no\.?)?$/.test(label)) return 140;
@@ -2074,15 +2119,22 @@ function rowSliderColumnWidth(header, index) {
   return 164;
 }
 
-function initializeTableRowSliders(root = document) {
+function initializeScrollableTables(root = document) {
   const tables = root instanceof HTMLTableElement ? [root] : [...root.querySelectorAll("table")];
   tables.forEach((table) => {
-    table.classList.add("row-slider-table");
+    table.classList.add("table-scroll-content");
     const headers = [...table.querySelectorAll("thead th")];
-    const widths = headers.map(rowSliderColumnWidth);
+    const widths = headers.map(tableColumnWidth);
     if (!widths.length) return;
-    table.style.setProperty("--row-slider-template", widths.map((width) => `${width}px`).join(" "));
-    table.querySelectorAll("tbody tr").forEach((row) => row.classList.add("row-slider"));
+    table.style.setProperty("--table-scroll-width", `${widths.reduce((total, width) => total + width, 0)}px`);
+    headers.forEach((header, index) => {
+      header.style.width = `${widths[index]}px`;
+    });
+    table.querySelectorAll("tr").forEach((row) => {
+      [...row.cells].forEach((cell, index) => {
+        if (widths[index] !== undefined) cell.style.width = `${widths[index]}px`;
+      });
+    });
   });
 
   if (root !== document || tableRowSliderObserver || !document.body) return;
@@ -2099,7 +2151,7 @@ function initializeTableRowSliders(root = document) {
         else node.querySelectorAll("table").forEach((table) => changedTables.add(table));
       });
     });
-    changedTables.forEach((table) => initializeTableRowSliders(table));
+    changedTables.forEach((table) => initializeScrollableTables(table));
   });
   tableRowSliderObserver.observe(document.body, { childList: true, subtree: true });
 }
@@ -2121,6 +2173,28 @@ function deliveryItemSummary(items) {
   if (!lines.length) return "—";
   const first = `${escapeHtml(lines[0].item_name)}${lines[0].quantity ? ` × ${escapeHtml(lines[0].quantity)} pcs` : ""}`;
   return `${first}${lines.length > 1 ? ` +${lines.length - 1} more` : ""}`;
+}
+
+function deliverySoNumbers(row) {
+  const items = Array.isArray(row.items) ? row.items : [];
+  return [...new Set(items.map((item) => String(item.so_number || "").trim()).filter(Boolean))];
+}
+
+function deliveryAddress(row) {
+  const items = Array.isArray(row.items) ? row.items : [];
+  return [...new Set(items.map((item) => String(item.address || "").trim()).filter(Boolean))].join(" · ");
+}
+
+function deliverySalespersonName(row) {
+  return deliverySalespersonNames.get(row.salesperson_id || row.created_by) || "—";
+}
+
+function deliverySoNumberCell(row) {
+  const numbers = deliverySoNumbers(row);
+  if (!numbers.length) return "—";
+  const visible = numbers.slice(0, 2).map(escapeHtml).join(", ");
+  const remaining = numbers.length > 2 ? ` +${numbers.length - 2} more` : "";
+  return `<span class="delivery-so-numbers" title="${escapeHtml(numbers.join(", "))}">${visible}${remaining}</span>`;
 }
 
 function deliveryGoodsStatusLabel(status) {
@@ -2456,6 +2530,34 @@ function deliveryStatusFilter(query) {
   if (["production", "dispatch"].includes(profile.role)) {
     query = query.neq("handoff_status", "pending_details");
   }
+  if (page === "deliveries.html") {
+    const dateFrom = document.querySelector("#delivery-date-from").value;
+    const dateTo = document.querySelector("#delivery-date-to").value;
+    const salesperson = document.querySelector("#delivery-salesperson").value;
+    const production = document.querySelector("#delivery-production-filter").value;
+    const dispatch = document.querySelector("#delivery-dispatch-filter").value;
+    const search = document.querySelector("#delivery-search").value.trim();
+    const orFilters = [];
+    if (production) query = query.eq("production_status", production);
+    if (dispatch === "not-packed") {
+      query = query.eq("dispatch_status", "Not delivered").is("dispatched_at", null);
+    } else if (dispatch === "packed") {
+      query = query.eq("dispatch_status", "Not delivered").not("dispatched_at", "is", null);
+    } else if (dispatch) {
+      query = query.eq("dispatch_status", dispatch);
+    }
+    if (dateFrom) query = query.gte("delivery_date", dateFrom);
+    if (dateTo) query = query.lte("delivery_date", dateTo);
+    if (salesperson) {
+      orFilters.push(`or(salesperson_id.eq.${salesperson},and(salesperson_id.is.null,created_by.eq.${salesperson}))`);
+    }
+    if (search) {
+      const term = JSON.stringify(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
+      orFilters.push(`or(so_numbers_search.ilike.${term},client_name.ilike.${term})`);
+    }
+    if (orFilters.length) query = query.or(`and(${orFilters.join(",")})`);
+    return query;
+  }
   const filter = document.querySelector("#delivery-status-filter")?.value || "";
   if (filter === "Not ready") return query.eq("production_status", "Not ready");
   if (filter === "Ready") return query.eq("production_status", "Ready").eq("dispatch_status", "Not delivered");
@@ -2464,9 +2566,120 @@ function deliveryStatusFilter(query) {
   return query;
 }
 
-async function queryDeliveryPage(offset, search, searchField) {
+function saveDeliveryFilters() {
+  try {
+    sessionStorage.setItem(DELIVERY_FILTERS_KEY, JSON.stringify({
+      from: document.querySelector("#delivery-date-from").value,
+      to: document.querySelector("#delivery-date-to").value,
+      salesperson: document.querySelector("#delivery-salesperson").value,
+      production: document.querySelector("#delivery-production-filter").value,
+      dispatch: document.querySelector("#delivery-dispatch-filter").value
+    }));
+  } catch (error) {
+    console.error("Could not save delivery filters for this session.", error);
+    toast("Could not save delivery filters for this session.", "error");
+  }
+}
+
+function restoreDeliveryFilters() {
+  let saved;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(DELIVERY_FILTERS_KEY) || "null");
+  } catch (error) {
+    console.error("Could not read delivery filters for this session.", error);
+    return;
+  }
+  if (!saved || typeof saved !== "object") return;
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (datePattern.test(saved.from || "")) document.querySelector("#delivery-date-from").value = saved.from;
+  if (datePattern.test(saved.to || "")) document.querySelector("#delivery-date-to").value = saved.to;
+  if (["", "Not ready", "Ready"].includes(saved.production)) {
+    document.querySelector("#delivery-production-filter").value = saved.production;
+  }
+  if (["", "not-packed", "packed", "Not delivered", "Delivered"].includes(saved.dispatch)) {
+    document.querySelector("#delivery-dispatch-filter").value = saved.dispatch;
+  }
+  if (typeof saved.salesperson === "string") {
+    document.querySelector("#delivery-salesperson").dataset.savedValue = saved.salesperson;
+  }
+}
+
+async function loadDeliveryFilterSalespeople() {
+  const select = document.querySelector("#delivery-salesperson");
+  deliverySalespersonNames = new Map();
+  if (profile.role === "salesperson") {
+    deliverySalespersonNames.set(profile.id, profile.full_name);
+    document.querySelector("#delivery-salesperson-filter").classList.add("hidden");
+    return;
+  }
+  const salespersonIds = new Set();
+  let offset = 0;
+  while (true) {
+    const { data, error } = await client.from(deliveryReadTable())
+      .select("salesperson_id,created_by")
+      .order("sr")
+      .range(offset, offset + 999);
+    if (error) throw error;
+    (data || []).forEach((row) => {
+      const id = row.salesperson_id || row.created_by;
+      if (id) salespersonIds.add(id);
+    });
+    if ((data || []).length < 1000) break;
+    offset += 1000;
+  }
+  if (!salespersonIds.size) return;
+  const { data, error } = await client.from("profiles").select("id,full_name")
+    .eq("role", "salesperson").in("id", [...salespersonIds]).order("full_name");
+  if (error) throw error;
+  const users = data || [];
+  deliverySalespersonNames = new Map(users.map((user) => [user.id, user.full_name]));
+  select.innerHTML = '<option value="">All salespeople</option>' + users.map((user) =>
+    `<option value="${escapeHtml(user.id)}">${escapeHtml(user.full_name)}</option>`
+  ).join("");
+  const savedValue = select.dataset.savedValue;
+  if (savedValue && users.some((user) => user.id === savedValue)) select.value = savedValue;
+}
+
+async function initializeDeliveryFilters() {
+  restoreDeliveryFilters();
+  await loadDeliveryFilterSalespeople();
+  const filterSelectors = [
+    "#delivery-date-from",
+    "#delivery-date-to",
+    "#delivery-salesperson",
+    "#delivery-production-filter",
+    "#delivery-dispatch-filter"
+  ];
+  filterSelectors.forEach((selector) => {
+    document.querySelector(selector).addEventListener("change", () => {
+      saveDeliveryFilters();
+      void loadDeliveries(true);
+    });
+  });
+  document.querySelector("#delivery-clear-filters").addEventListener("click", () => {
+    document.querySelector("#delivery-date-from").value = "";
+    document.querySelector("#delivery-date-to").value = "";
+    document.querySelector("#delivery-salesperson").value = "";
+    document.querySelector("#delivery-production-filter").value = "";
+    document.querySelector("#delivery-dispatch-filter").value = "";
+    saveDeliveryFilters();
+    void loadDeliveries(true);
+  });
+  document.querySelector("#delivery-reset-filters").addEventListener("click", () => {
+    document.querySelector("#delivery-date-from").value = "";
+    document.querySelector("#delivery-date-to").value = "";
+    document.querySelector("#delivery-salesperson").value = "";
+    document.querySelector("#delivery-production-filter").value = "Not ready";
+    document.querySelector("#delivery-dispatch-filter").value = "Not delivered";
+    saveDeliveryFilters();
+    void loadDeliveries(true);
+  });
+  saveDeliveryFilters();
+}
+
+async function queryDeliveryPage(offset, search = "", searchField = "ref_no") {
   const ascending = activeSort.direction === "asc";
-  let query = deliveryStatusFilter(client.from(deliveryReadTable()).select(deliverySelect));
+  let query = deliveryStatusFilter(client.from(deliveryReadTable()).select(deliverySelect, { count: "exact" }));
   if (activeSort.key === "delivery_schedule") {
     query = query.order("delivery_date", { ascending, nullsFirst: false })
       .order("delivery_time", { ascending, nullsFirst: false });
@@ -2474,11 +2687,11 @@ async function queryDeliveryPage(offset, search, searchField) {
     const sortColumn = ["sr", "ref_no", "created_at"].includes(activeSort.key) ? activeSort.key : "sr";
     query = query.order(sortColumn, { ascending });
   }
+  if (page !== "deliveries.html" && search) query = query.ilike(searchField, `%${search}%`);
   query = query.range(offset, offset + PAGE_SIZE - 1);
-  if (search) query = query.ilike(searchField, `%${search}%`);
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw error;
-  return data || [];
+  return { rows: data || [], count: count || 0 };
 }
 
 async function loadDeliveries(reset = true) {
@@ -2488,23 +2701,34 @@ async function loadDeliveries(reset = true) {
   if (reset) deliveryOffset = 0;
   const search = document.querySelector("#delivery-search")?.value.trim() || "";
   try {
-    const pageRows = search
-      ? (await Promise.all([
+    let result;
+    if (page === "deliveries.html" || !search) {
+      result = await queryDeliveryPage(deliveryOffset);
+    } else {
+      const results = await Promise.all([
         queryDeliveryPage(deliveryOffset, search, "ref_no"),
         queryDeliveryPage(deliveryOffset, search, "client_name")
-      ])).flat().filter((row, index, values) => values.findIndex((other) => other.id === row.id) === index)
-      : await queryDeliveryPage(deliveryOffset, "", "ref_no");
+      ]);
+      const rows = results.flatMap((response) => response.rows)
+        .filter((row, index, values) => values.findIndex((other) => other.id === row.id) === index);
+      result = { rows, count: rows.length };
+    }
+    const pageRows = result.rows;
     if (token !== deliveryQueryToken) return;
     deliveryRows = reset ? pageRows : [...deliveryRows, ...pageRows.filter((row) => !deliveryRows.some((old) => old.id === row.id))];
-    if (!reset) deliveryOffset += PAGE_SIZE;
-    else deliveryOffset = PAGE_SIZE;
+    deliveryTotalCount = result.count;
+    deliveryOffset = page === "deliveries.html"
+      ? reset ? pageRows.length : deliveryOffset + pageRows.length
+      : reset ? PAGE_SIZE : deliveryOffset + PAGE_SIZE;
     renderDeliveryRows();
     if (wasLoaded) {
       document.querySelectorAll("#delivery-rows [data-entry-id]").forEach((row) => {
         if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
       });
     }
-    document.querySelector("#delivery-more").classList.toggle("hidden", pageRows.length < PAGE_SIZE);
+    document.querySelector("#delivery-more").classList.toggle("hidden", page === "deliveries.html"
+      ? deliveryOffset >= deliveryTotalCount
+      : pageRows.length < PAGE_SIZE);
   } catch (error) {
     toast(error.message || "Could not load deliveries.", "error");
   }
@@ -2550,20 +2774,29 @@ function renderDeliveryRows() {
     }
   ]));
   const query = document.querySelector("#delivery-search")?.value.trim().toLowerCase() || "";
-  const filtered = sortRows(deliveryRows.filter((row) => !query
-    || `${row.ref_no} ${row.client_name || ""} ${row.contact_name || ""}`.toLowerCase().includes(query)));
-  tbody.innerHTML = filtered.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}">
-    <td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date || "—")}<br>${row.delivery_date ? escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time)) : "—"}</td>
-    <td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td>
-    <td>${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}</td>
-    <td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View items">${deliveryItemSummary(row.items)}</td>
-    ${page === "deliveries.html" ? `<td>${deliveryGoodsStatus(row)
-      ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
-      : "—"}</td>` : ""}
-    <td><span class="${row.handoff_status === "pending_details" ? "delivery-status-orange" : row.production_status === "Ready" ? "delivery-status-green" : "delivery-status-red"}">${row.handoff_status === "pending_details" ? "Awaiting salesperson" : escapeHtml(row.production_status)}</span>${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>
-    <td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>
-    <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" && deliveryGoodsStatus(row) === "ready" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && row.created_by === profile.id && row.handoff_status === "pending_details" ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td></tr>`).join("");
-  initializeTableRowSliders(tbody.closest("table"));
+  const filtered = sortRows(deliveryRows.filter((row) => {
+    if (!query) return true;
+    const searchable = page === "deliveries.html"
+      ? [row.client_name, ...deliverySoNumbers(row)]
+      : [row.ref_no, row.client_name, row.contact_name];
+    return searchable.some((value) => String(value || "").toLowerCase().includes(query));
+  }));
+  tbody.innerHTML = filtered.map((row) => {
+    const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}`;
+    const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
+    const deliveryColumns = page === "deliveries.html"
+      ? `<td>${clientContact}</td><td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td><td>${deliverySoNumberCell(row)}</td>${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
+        ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
+        : "—"}</td>`
+      : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
+    return `<tr data-entry-id="${escapeHtml(row.id)}">
+      <td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date || "—")}<br>${row.delivery_date ? escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time)) : "—"}</td>
+      ${deliveryColumns}
+      <td><span class="${row.handoff_status === "pending_details" ? "delivery-status-orange" : row.production_status === "Ready" ? "delivery-status-green" : "delivery-status-red"}">${row.handoff_status === "pending_details" ? "Awaiting salesperson" : escapeHtml(row.production_status)}</span>${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>
+      <td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>
+      <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" && deliveryGoodsStatus(row) === "ready" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && row.created_by === profile.id && row.handoff_status === "pending_details" ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td></tr>`;
+  }).join("");
+  initializeScrollableTables(tbody.closest("table"));
   dispatchValues.forEach((values, id) => {
     const transport = tbody.querySelector(`[data-transport="${CSS.escape(id)}"]`);
     const vehicle = tbody.querySelector(`[data-vehicle="${CSS.escape(id)}"]`);
@@ -2573,7 +2806,32 @@ function renderDeliveryRows() {
     }
     if (vehicle && [...vehicle.options].some((option) => option.value === values.vehicle)) vehicle.value = values.vehicle;
   });
-  document.querySelector("#delivery-empty").classList.toggle("hidden", filtered.length > 0);
+  const emptyState = document.querySelector("#delivery-empty");
+  emptyState.textContent = page === "deliveries.html"
+    ? "No deliveries match these filters."
+    : "No delivery requests found.";
+  emptyState.classList.toggle("hidden", filtered.length > 0);
+  if (page === "deliveries.html") {
+    const countLabel = deliveryTotalCount === 1 ? "delivery" : "deliveries";
+    document.querySelector("#delivery-results-count").textContent = deliveryRows.length < deliveryTotalCount
+      ? `Showing ${deliveryRows.length} of ${deliveryTotalCount} ${countLabel}`
+      : `Showing ${deliveryRows.length} ${countLabel}`;
+    const activeFilters = [];
+    const dateFrom = document.querySelector("#delivery-date-from").value;
+    const dateTo = document.querySelector("#delivery-date-to").value;
+    const salesperson = document.querySelector("#delivery-salesperson");
+    const production = document.querySelector("#delivery-production-filter").value;
+    const dispatch = document.querySelector("#delivery-dispatch-filter");
+    const search = document.querySelector("#delivery-search").value.trim();
+    if (dateFrom || dateTo) activeFilters.push(`Delivery date: ${dateFrom || "any"}–${dateTo || "any"}`);
+    if (salesperson.value) activeFilters.push(`Salesperson: ${salesperson.selectedOptions[0].textContent}`);
+    if (production) activeFilters.push(`Production: ${production}`);
+    if (dispatch.value) activeFilters.push(`Dispatch: ${dispatch.selectedOptions[0].textContent}`);
+    if (search) activeFilters.push(`Search: ${search}`);
+    document.querySelector("#delivery-active-filters").textContent = activeFilters.length
+      ? `Active filters: ${activeFilters.join(" · ")}`
+      : "No status, date, or salesperson filters";
+  }
   updateSortIndicators();
   tbody.querySelectorAll("[data-delivery-ready]").forEach((button) => button.addEventListener("click", () =>
     updateDelivery(button.dataset.deliveryReady, {
@@ -2661,12 +2919,13 @@ async function deleteDelivery(button) {
 
 function openDeliveryItemsView(row, trigger) {
   const items = Array.isArray(row.items) ? row.items : [];
+  const soNumbers = deliverySoNumbers(row);
   const content = document.querySelector("#delivery-items-view-content");
   const goodsStatusColumn = page === "production-store.html" || deliveryEditId;
-  content.innerHTML = `<table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Address to deliver</th>${goodsStatusColumn ? "<th>Goods status</th>" : ""}</tr></thead><tbody>${items.map((item) =>
+  content.innerHTML = `<h3>SO number(s)</h3><p>${soNumbers.length ? soNumbers.map(escapeHtml).join(", ") : "—"}</p><table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Address to deliver</th>${goodsStatusColumn ? "<th>Goods status</th>" : ""}</tr></thead><tbody>${items.map((item) =>
     `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.address)}</td>${goodsStatusColumn ? `<td>${escapeHtml(deliveryGoodsStatusLabel(item.goods_status))}</td>` : ""}</tr>`
   ).join("")}</tbody></table>`;
-  initializeTableRowSliders(content.querySelector("table"));
+  initializeScrollableTables(content.querySelector("table"));
   const dialog = document.querySelector("#delivery-items-view-dialog");
   const close = () => dialog.close();
   dialog.querySelectorAll("[data-items-view-close]").forEach((button) => { button.onclick = close; });
@@ -2697,17 +2956,21 @@ async function openDeliveryView(row, trigger) {
     vehicleName = vehicleResult.data?.registration_number || "—";
   }
   const items = Array.isArray(row.items) ? row.items : [];
+  const addresses = deliveryAddress(row);
+  const soNumbers = deliverySoNumbers(row);
   const content = document.querySelector("#delivery-view-content");
   content.innerHTML = `<dl class="delivery-detail-grid">
     <div><dt>Reference number</dt><dd>${escapeHtml(row.ref_no)}</dd></div>
     <div><dt>Requested by</dt><dd>${escapeHtml(requestedBy)}</dd></div>
     <div><dt>Time requested</dt><dd>${escapeHtml(localDateTime(row.created_at))}</dd></div>
     <div><dt>Client</dt><dd>${escapeHtml(row.client_name)}</dd></div>
+    <div><dt>Delivery address</dt><dd>${escapeHtml(addresses || "—")}</dd></div>
     ${["production", "dispatch"].includes(profile.role) ? "" : `<div><dt>Contact name</dt><dd>${escapeHtml(row.contact_name)}</dd></div>
     <div><dt>Contact number</dt><dd>${escapeHtml(row.contact_number)}</dd></div>`}
     <div><dt>Delivery date and time</dt><dd>${escapeHtml(row.delivery_date || "—")} · ${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}</dd></div>
     <div><dt>Special instruction</dt><dd>${escapeHtml(row.special_instruction || "—")}</dd></div>
   </dl>
+  <h3>SO number(s)</h3><p>${soNumbers.length ? soNumbers.map(escapeHtml).join(", ") : "—"}</p>
   <h3>Items</h3><div class="table-wrap"><table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Address</th></tr></thead><tbody>${items.map((item) =>
     `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.address)}</td></tr>`
   ).join("")}</tbody></table></div>
@@ -2719,7 +2982,7 @@ async function openDeliveryView(row, trigger) {
     <div><dt>Dispatched</dt><dd>${escapeHtml(localDateTime(row.dispatched_at))}</dd></div>
     <div><dt>Delivered</dt><dd>${escapeHtml(localDateTime(row.delivered_at))}</dd></div>
   </dl>`;
-  content.querySelectorAll("table").forEach((table) => initializeTableRowSliders(table));
+  content.querySelectorAll("table").forEach((table) => initializeScrollableTables(table));
   const dialog = document.querySelector("#delivery-view-dialog");
   const close = dialog.querySelector("[data-delivery-view-close]");
   close.onclick = () => dialog.close();
@@ -2835,8 +3098,9 @@ async function initDeliveries() {
   }
   await refreshAssignedPendingDeliveries();
   if (profile.role === "dispatch" || profile.role === "admin") await loadActiveVehicles();
+  if (page === "deliveries.html") await initializeDeliveryFilters();
   document.querySelector("#delivery-search").addEventListener("input", debounce(() => { void loadDeliveries(true); }));
-  document.querySelector("#delivery-status-filter").addEventListener("change", () => { void loadDeliveries(true); });
+  document.querySelector("#delivery-status-filter")?.addEventListener("change", () => { void loadDeliveries(true); });
   document.querySelector("#delivery-more").addEventListener("click", () => { void loadDeliveries(false); });
   document.querySelector("#delivery-item-add").addEventListener("click", () => {
     deliveryItemsState.lines.push({ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" });
@@ -2951,7 +3215,7 @@ function renderVehicles() {
   root.innerHTML = vehicleRows.map((vehicle) => `<tr data-entry-id="${escapeHtml(vehicle.id)}"><td>${escapeHtml(vehicle.registration_number)}</td><td>${escapeHtml(vehicle.description)}</td>
     <td>${vehicle.active ? "Active" : "Inactive"}</td><td><div class="table-actions"><button class="secondary" data-vehicle-edit="${escapeHtml(vehicle.id)}">Edit</button>
     <button class="quiet" data-vehicle-toggle="${escapeHtml(vehicle.id)}">${vehicle.active ? "Deactivate" : "Reactivate"}</button></div></td></tr>`).join("");
-  initializeTableRowSliders(root.closest("table"));
+  initializeScrollableTables(root.closest("table"));
   document.querySelector("#vehicle-empty").classList.toggle("hidden", vehicleRows.length > 0);
   root.querySelectorAll("[data-vehicle-edit]").forEach((button) => button.addEventListener("click", () => {
     const vehicle = vehicleRows.find((item) => item.id === button.dataset.vehicleEdit);
@@ -3122,6 +3386,132 @@ async function loadRiderUsers() {
   riderUsers = data || [];
 }
 
+function routeRiderDateRange(period, currentDate = dateKey(new Date())) {
+  if (period === "all") return null;
+  const date = new Date(`${currentDate}T00:00:00Z`);
+  const start = new Date(date);
+  const end = new Date(date);
+  if (period === "week") {
+    start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+    end.setTime(start.getTime());
+    end.setUTCDate(end.getUTCDate() + 6);
+  } else if (period === "month") {
+    start.setUTCDate(1);
+    end.setUTCMonth(end.getUTCMonth() + 1, 0);
+  }
+  const format = (value) => value.toISOString().slice(0, 10);
+  return { from: format(start), to: format(end) };
+}
+
+function routeRiderFilterValues() {
+  return {
+    period: document.querySelector("#route-request-period").value,
+    salesperson: document.querySelector("#route-salesperson-filter-select").value,
+    rider: document.querySelector("#route-rider-filter-select").value,
+    status: document.querySelector("#route-status-filter").value
+  };
+}
+
+function saveRouteRiderFilters() {
+  try {
+    sessionStorage.setItem(ROUTE_RIDER_FILTERS_KEY, JSON.stringify(routeRiderFilterValues()));
+  } catch (error) {
+    console.error("Could not save Route admin filters for this session.", error);
+    toast("Could not save Route admin filters for this session.", "error");
+  }
+}
+
+function restoreRouteRiderFilters() {
+  let saved;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(ROUTE_RIDER_FILTERS_KEY) || "null");
+  } catch (error) {
+    console.error("Could not read Route admin filters for this session.", error);
+    return;
+  }
+  if (!saved || typeof saved !== "object") return;
+  if (["today", "week", "month", "all"].includes(saved.period)) {
+    document.querySelector("#route-request-period").value = saved.period;
+  }
+  if (typeof saved.salesperson === "string") {
+    document.querySelector("#route-salesperson-filter-select").dataset.savedValue = saved.salesperson;
+  }
+  if (typeof saved.rider === "string") {
+    document.querySelector("#route-rider-filter-select").dataset.savedValue = saved.rider;
+  }
+  if (["active", "", "Not started", "Started", "In progress", "Finished", "Declined"].includes(saved.status)) {
+    document.querySelector("#route-status-filter").value = saved.status;
+  }
+}
+
+async function loadRouteSalespersonOptions() {
+  const ids = new Set();
+  let offset = 0;
+  while (true) {
+    const { data, error } = await client.from("rider_jobs").select("created_by")
+      .order("created_at").range(offset, offset + 999);
+    if (error) throw error;
+    (data || []).forEach((row) => {
+      if (row.created_by) ids.add(row.created_by);
+    });
+    if ((data || []).length < 1000) break;
+    offset += 1000;
+  }
+  const select = document.querySelector("#route-salesperson-filter-select");
+  if (!ids.size) return;
+  const { data, error } = await client.from("profiles").select("id,full_name")
+    .eq("active", true).in("id", [...ids]).order("full_name");
+  if (error) throw error;
+  const people = data || [];
+  people.forEach((person) => requesterNames.set(person.id, person.full_name));
+  select.innerHTML = '<option value="">All salespeople</option>' + people.map((person) =>
+    `<option value="${escapeHtml(person.id)}">${escapeHtml(person.full_name)}</option>`
+  ).join("");
+  const savedValue = select.dataset.savedValue;
+  if (savedValue && people.some((person) => person.id === savedValue)) select.value = savedValue;
+}
+
+async function initializeRouteRiderFilters() {
+  restoreRouteRiderFilters();
+  await loadRouteSalespersonOptions();
+  const riderSelect = document.querySelector("#route-rider-filter-select");
+  riderSelect.innerHTML = '<option value="">All riders</option><option value="__unassigned">Not assigned</option>' + riderUsers.map((rider) =>
+    `<option value="${escapeHtml(rider.id)}">${escapeHtml(rider.full_name)}</option>`
+  ).join("");
+  const savedRider = riderSelect.dataset.savedValue;
+  if (savedRider && (savedRider === "__unassigned" || riderUsers.some((rider) => rider.id === savedRider))) {
+    riderSelect.value = savedRider;
+  }
+  [
+    "#route-request-period",
+    "#route-salesperson-filter-select",
+    "#route-rider-filter-select",
+    "#route-status-filter"
+  ].forEach((selector) => {
+    document.querySelector(selector).addEventListener("change", () => {
+      saveRouteRiderFilters();
+      void loadRiderJobs(true);
+    });
+  });
+  document.querySelector("#route-clear-filters").addEventListener("click", () => {
+    document.querySelector("#route-request-period").value = "all";
+    document.querySelector("#route-salesperson-filter-select").value = "";
+    document.querySelector("#route-rider-filter-select").value = "";
+    document.querySelector("#route-status-filter").value = "";
+    saveRouteRiderFilters();
+    void loadRiderJobs(true);
+  });
+  document.querySelector("#route-reset-filters").addEventListener("click", () => {
+    document.querySelector("#route-request-period").value = "today";
+    document.querySelector("#route-salesperson-filter-select").value = "";
+    document.querySelector("#route-rider-filter-select").value = "__unassigned";
+    document.querySelector("#route-status-filter").value = "active";
+    saveRouteRiderFilters();
+    void loadRiderJobs(true);
+  });
+  saveRouteRiderFilters();
+}
+
 async function loadRiderJobs(reset = true) {
   const token = ++riderQueryToken;
   const previousIds = new Set(riderJobRows.map((row) => row.id));
@@ -3129,38 +3519,34 @@ async function loadRiderJobs(reset = true) {
   if (reset) riderOffset = 0;
   const routeAdmin = hasRouteAdminAccess(profile) && page === "route-admin.html";
   const search = document.querySelector("#route-search")?.value.trim() || "";
-  const status = document.querySelector("#route-status-filter")?.value || "";
-  let base = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at");
-  if (routeAdmin && status) base = base.eq("status", status);
+  const routeFilters = routeAdmin ? routeRiderFilterValues() : null;
+  let base = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at", routeAdmin ? { count: "exact" } : undefined);
+  if (routeAdmin) {
+    const dateRange = routeRiderDateRange(routeFilters.period);
+    if (dateRange) base = base.gte("scheduled_date", dateRange.from).lte("scheduled_date", dateRange.to);
+    if (routeFilters.salesperson) base = base.eq("created_by", routeFilters.salesperson);
+    if (routeFilters.rider === "__unassigned") base = base.is("assigned_rider", null);
+    else if (routeFilters.rider) base = base.eq("assigned_rider", routeFilters.rider);
+    if (routeFilters.status === "active") {
+      base = base.neq("status", "Finished").neq("status", "Declined");
+    }
+    else if (routeFilters.status) base = base.eq("status", routeFilters.status);
+  }
   if (profile.role === "rider" && !routeAdmin) base = base.eq("assigned_rider", profile.id);
   else if (!routeAdmin) base = base.eq("created_by", profile.id);
-  const searchQuery = (field) => {
-    let query = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at");
-    if (routeAdmin && status) query = query.eq("status", status);
-    if (profile.role === "rider" && !routeAdmin) query = query.eq("assigned_rider", profile.id);
-    else if (!routeAdmin) query = query.eq("created_by", profile.id);
-    return query.ilike(field, `%${search}%`).order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin })
-      .range(riderOffset, riderOffset + PAGE_SIZE - 1);
-  };
   try {
-    let rows;
     if (routeAdmin && search) {
-      const results = await Promise.all([searchQuery("ref_no"), searchQuery("client_name")]);
-      const error = results.find((result) => result.error)?.error;
-      if (error) throw error;
-      rows = results.flatMap((result) => result.data || [])
-        .filter((row, index, all) => all.findIndex((other) => other.id === row.id) === index)
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
-        .slice(0, PAGE_SIZE);
-    } else {
-      if (!routeAdmin && search) base = base.ilike("client_name", `%${search}%`);
-      const { data, error } = await base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin }).range(riderOffset, riderOffset + PAGE_SIZE - 1);
-      if (error) throw error;
-      rows = data || [];
-    }
+      const term = JSON.stringify(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
+      base = base.or(`ref_no.ilike.${term},client_name.ilike.${term}`);
+    } else if (!routeAdmin && search) base = base.ilike("client_name", `%${search}%`);
+    const { data, error, count } = await base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin })
+      .range(riderOffset, riderOffset + PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = data || [];
     if (token !== riderQueryToken) return;
     riderJobRows = reset ? rows : [...riderJobRows, ...rows.filter((row) => !riderJobRows.some((old) => old.id === row.id))];
-    riderOffset = reset ? PAGE_SIZE : riderOffset + PAGE_SIZE;
+    riderOffset = reset ? rows.length : riderOffset + rows.length;
+    if (routeAdmin) routeRiderTotalCount = count || 0;
     if (profile.role === "rider") {
       const activeResult = await client.from("rider_jobs").select("id", { count: "exact", head: true })
         .eq("assigned_rider", profile.id).eq("status", "In progress");
@@ -3176,7 +3562,9 @@ async function loadRiderJobs(reset = true) {
           if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
         });
     }
-    document.querySelector("#route-more")?.classList.toggle("hidden", rows.length < PAGE_SIZE);
+    document.querySelector("#route-more")?.classList.toggle("hidden", routeAdmin
+      ? riderOffset >= routeRiderTotalCount
+      : rows.length < PAGE_SIZE);
   } catch (error) {
     toast(error.message || "Could not load rider requests.", "error");
   }
@@ -3231,7 +3619,7 @@ function renderRiderJobs() {
   const status = routeView ? document.querySelector("#route-status-filter")?.value || ""
     : document.querySelector("#sales-rider-filter")?.value || "";
   const matchingRows = riderJobRows.filter((row) => (!search || `${row.ref_no} ${row.client_name}${routeView ? "" : ` ${row.address}`}`.toLowerCase().includes(search))
-    && (!status || row.status === status));
+    && (routeView || !status || row.status === status));
   const markup = (rows, canAssign) => rows.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}"><td><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>
     ${canAssign ? `<td>${escapeHtml(requesterNames.get(row.created_by) || "Salesperson")}</td>` : ""}
     <td>${escapeHtml(row.client_name)}<br><small>${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</small></td>
@@ -3244,7 +3632,7 @@ function renderRiderJobs() {
   if (routeView) {
     const routeRows = document.querySelector("#route-rider-rows");
     routeRows.innerHTML = markup(matchingRows, true);
-    initializeTableRowSliders(routeRows.closest("table"));
+    initializeScrollableTables(routeRows.closest("table"));
     assignmentValues.forEach((values, id) => {
       const rider = routeRows.querySelector(`[data-rider-choice="${CSS.escape(id)}"]`);
       const slot = routeRows.querySelector(`[data-rider-slot="${CSS.escape(id)}"]`);
@@ -3252,16 +3640,38 @@ function renderRiderJobs() {
       if (slot) slot.value = values.slot;
     });
     document.querySelector("#route-rider-empty")?.classList.toggle("hidden", matchingRows.length > 0);
+    const requestCount = routeRiderTotalCount === 1 ? "request" : "requests";
+    document.querySelector("#route-results-count").textContent = riderJobRows.length < routeRiderTotalCount
+      ? `Showing ${riderJobRows.length} of ${routeRiderTotalCount} ${requestCount}`
+      : `Showing ${riderJobRows.length} ${requestCount}`;
+    const filters = routeRiderFilterValues();
+    const active = [];
+    if (filters.period !== "all") {
+      active.push(`Period: ${document.querySelector("#route-request-period").selectedOptions[0].textContent}`);
+    }
+    if (filters.salesperson) {
+      active.push(`Salesperson: ${document.querySelector("#route-salesperson-filter-select").selectedOptions[0].textContent}`);
+    }
+    if (filters.rider) {
+      active.push(`Rider: ${document.querySelector("#route-rider-filter-select").selectedOptions[0].textContent}`);
+    }
+    if (filters.status) {
+      active.push(`Status: ${document.querySelector("#route-status-filter").selectedOptions[0].textContent}`);
+    }
+    if (search) active.push(`Search: ${search}`);
+    document.querySelector("#route-active-filters").textContent = active.length
+      ? `Active filters: ${active.join(" · ")}`
+      : "No active filters";
   }
   if (showSalesView) {
     const salesRows = matchingRows.filter((row) => row.created_by === profile.id);
     const salesRoot = document.querySelector("#sales-rider-rows");
     salesRoot.innerHTML = markup(salesRows, false);
-    initializeTableRowSliders(salesRoot.closest("table"));
+    initializeScrollableTables(salesRoot.closest("table"));
     document.querySelector("#sales-rider-empty")?.classList.toggle("hidden", salesRows.length > 0);
   }
   const loadMore = document.querySelector("#route-more");
-  if (loadMore) loadMore.classList.toggle("hidden", !routeView || riderJobRows.length < PAGE_SIZE);
+  if (loadMore) loadMore.classList.toggle("hidden", !routeView || riderOffset >= routeRiderTotalCount);
   document.querySelector("#sales-rider-more")?.classList.toggle("hidden", !showSalesView || riderJobRows.length < PAGE_SIZE);
   const roots = [routeView ? document.querySelector("#route-rider-rows") : null,
     showSalesView ? document.querySelector("#sales-rider-rows") : null].filter(Boolean);
@@ -3282,7 +3692,9 @@ function renderRiderJobs() {
       await updateRiderJob(id, {
         assigned_rider: riderId, rider_time: slot, rider_time_end: end, status: "Started",
         ...(profile.role === "admin" ? { assigned_at: new Date().toISOString() } : {})
-      }, button, "Rider assigned.");
+      }, button, routeView && document.querySelector("#route-rider-filter-select").value === "__unassigned"
+        ? "Rider assigned; removed from the unassigned list."
+        : "Rider assigned.");
     }));
     root.querySelectorAll("[data-rider-decline]").forEach((button) => button.addEventListener("click", async () => {
       const reason = window.prompt("Why is this rider request being declined?");
@@ -3333,10 +3745,10 @@ async function initRiders() {
     document.querySelector("#route-riders-rows").innerHTML = riderUsers.map((user) =>
       `<tr><td>${escapeHtml(user.full_name)}</td><td>${escapeHtml(user.username)}</td><td>${user.active ? "Active" : "Inactive"}</td></tr>`
     ).join("");
-    initializeTableRowSliders(document.querySelector("#route-riders-rows").closest("table"));
+    initializeScrollableTables(document.querySelector("#route-riders-rows").closest("table"));
     document.querySelector("#route-search").addEventListener("input", debounce(() => { void loadRiderJobs(true); }));
-    document.querySelector("#route-status-filter").addEventListener("change", () => { void loadRiderJobs(true); });
     document.querySelector("#route-more").addEventListener("click", () => { void loadRiderJobs(false); });
+    await initializeRouteRiderFilters();
   }
   if (routeAdmin) {
     bindPeriodSummary("route-period", () => renderPeriodSummary("route-tallies", "route-period", "rider_jobs", [

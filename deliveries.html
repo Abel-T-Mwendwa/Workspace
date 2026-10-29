@@ -22,10 +22,21 @@
       </form>
     </section>
     <section class="panel">
-      <div class="section-heading"><h2>Delivery requests</h2><select id="delivery-status-filter" aria-label="Filter deliveries"><option value="">All deliveries</option><option>Not ready</option><option>Ready</option><option>Not delivered</option><option>Delivered</option></select></div>
-      <div class="toolbar"><input id="delivery-search" placeholder="Search reference or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
-      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th data-sort="ref_no">Ref no</th><th data-sort="created_at">Requested</th><th>Client / contact</th><th>Items</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
-      <p id="delivery-empty" class="empty-state hidden">No delivery requests found.</p>
+      <div class="section-heading"><h2>Delivery requests</h2></div>
+      <div class="toolbar"><input id="delivery-search" placeholder="Search SO number or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
+      <div id="delivery-filter-bar" class="delivery-filter-bar">
+        <div class="delivery-date-range">
+          <label>From<input id="delivery-date-from" type="date" aria-label="Delivery date from"></label>
+          <label>To<input id="delivery-date-to" type="date" aria-label="Delivery date to"></label>
+        </div>
+        <label id="delivery-salesperson-filter">Salesperson<select id="delivery-salesperson"><option value="">All salespeople</option></select></label>
+        <label>Production<select id="delivery-production-filter"><option value="">All</option><option value="Not ready" selected>Not ready</option><option value="Ready">Ready</option></select></label>
+        <label>Dispatch<select id="delivery-dispatch-filter"><option value="">All</option><option value="not-packed">Not packed</option><option value="packed">Packed</option><option value="Not delivered" selected>Not delivered</option><option value="Delivered">Delivered</option></select></label>
+        <div class="delivery-filter-actions"><button type="button" class="secondary" id="delivery-clear-filters">Clear filters</button><button type="button" class="quiet" id="delivery-reset-filters">Reset to default</button></div>
+      </div>
+      <p class="delivery-filter-summary"><span id="delivery-results-count">Showing 0 deliveries</span><span id="delivery-active-filters"></span></p>
+      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th>Client / Contact</th><th>Delivery address</th><th>SO number(s)</th><th>Items</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <p id="delivery-empty" class="empty-state hidden">No deliveries match these filters.</p>
     </section>
   </main>
   <dialog id="delivery-edit-dialog" class="line-editor-dialog">
