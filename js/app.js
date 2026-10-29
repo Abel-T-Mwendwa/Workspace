@@ -3057,10 +3057,6 @@ async function submitRiderRequest(event) {
   }
   timeMessage.textContent = "";
   timeMessage.classList.add("hidden");
-  if (!/^\+?[0-9][0-9 ()-]{6,30}$/.test(values.contact_number.trim())) {
-    toast("Enter a valid contact number.", "error");
-    return;
-  }
   setBusy(button, true, "Requesting…");
   try {
     const { data, error } = await client.from("rider_jobs").insert({
@@ -3079,6 +3075,7 @@ async function submitRiderRequest(event) {
     form.reset();
     initializeRiderRequestDate(form);
     await loadRiderJobs(true);
+    document.querySelector("#rider-period").dispatchEvent(new Event("change"));
   } catch (error) {
     toast(error.message || "Could not save the rider request.", "error");
   } finally {
