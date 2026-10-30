@@ -9,6 +9,7 @@ const client = window.supabase.createClient(window.APP_CONFIG.supabaseUrl, windo
 const historyDialog = document.querySelector("#history-dialog");
 historyDialog?.querySelector("[data-close-dialog]")?.addEventListener("click", () => historyDialog.close());
 const page = location.pathname.split("/").pop();
+const DEFAULT_GOODS_FILTER = "pending";
 const LOGIN_AT_KEY = "loginAt";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -21,6 +22,7 @@ let workNotesByRequest = new Map();
 let activeWorkNoteRequestId = null;
 let users = [];
 let deliveryRows = [];
+let productionGoodsFilter = DEFAULT_GOODS_FILTER;
 let deliveryTotalCount = 0;
 let assignedPendingDeliveries = [];
 let vehicleRows = [];
@@ -2538,7 +2540,7 @@ async function submitDelivery(event) {
     };
     const result = productionEditId
       ? await client.from("deliveries").update(values)
-        .eq("id", productionEditId).eq("created_by", profile.id).eq("handoff_status", "pending_details").select("id,ref_no").single()
+        .eq("id", productionEditId).eq("created_by", profile.id).select("id,ref_no").single()
       : deliveryEditId
       ? await client.from("deliveries").update({
         ...values,
@@ -2614,7 +2616,7 @@ function openDeliveryEdit(row) {
 
 function openProductionDeliveryEdit(row) {
   if (!isProductionStoreMode() || !hasProductionStoreAccess(profile)
-    || row.created_by !== profile.id || row.handoff_status !== "pending_details") return;
+    || row.created_by !== profile.id) return;
   const form = document.querySelector("#delivery-request-form");
   if (!form.classList.contains("hidden") && !confirm("Discard the current unsaved delivery entry?")) return;
   productionEditId = row.id;
@@ -2793,6 +2795,25 @@ async function loadDeliveryFilterSalespeople() {
   if (savedValue && users.some((user) => user.id === savedValue)) select.value = savedValue;
 }
 
+async function loadProductionStoreSalespeople() {
+  const ids = [...new Set(deliveryRows.map((row) => row.salesperson_id || row.created_by).filter(Boolean))];
+  deliverySalespersonNames = new Map();
+  if (ids.length) {
+    const { data, error } = await client.from("profiles").select("id,full_name").in("id", ids).order("full_name");
+    if (error) throw error;
+    deliverySalespersonNames = new Map((data || []).map((user) => [user.id, user.full_name]));
+  }
+  const select = document.querySelector("#production-salesperson-filter");
+  if (!select) return;
+  const selected = select.value;
+  const names = [...new Set(deliveryRows.map(deliverySalespersonName).filter((name) => name !== "—"))]
+    .sort((a, b) => a.localeCompare(b));
+  select.innerHTML = '<option value="">All salespeople</option>' + names.map((name) =>
+    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`
+  ).join("");
+  if (names.includes(selected)) select.value = selected;
+}
+
 async function initializeDeliveryFilters() {
   restoreDeliveryFilters();
   await loadDeliveryFilterSalespeople();
@@ -2855,7 +2876,12 @@ async function loadDeliveries(reset = true) {
   const search = document.querySelector("#delivery-search")?.value.trim() || "";
   try {
     let result;
-    if (page === "deliveries.html" || !search) {
+    if (page === "production-store.html") {
+      const { data, error } = await client.from(deliveryReadTable()).select(deliverySelect)
+        .order("sr", { ascending: false }).limit(1000);
+      if (error) throw error;
+      result = { rows: data || [], count: (data || []).length };
+    } else if (page === "deliveries.html" || !search) {
       result = await queryDeliveryPage(deliveryOffset);
     } else {
       const results = await Promise.all([
@@ -2870,16 +2896,18 @@ async function loadDeliveries(reset = true) {
     if (token !== deliveryQueryToken) return;
     deliveryRows = reset ? pageRows : [...deliveryRows, ...pageRows.filter((row) => !deliveryRows.some((old) => old.id === row.id))];
     deliveryTotalCount = result.count;
-    deliveryOffset = page === "deliveries.html"
+    deliveryOffset = page === "production-store.html" ? pageRows.length : page === "deliveries.html"
       ? reset ? pageRows.length : deliveryOffset + pageRows.length
       : reset ? PAGE_SIZE : deliveryOffset + PAGE_SIZE;
+    if (page === "production-store.html") await loadProductionStoreSalespeople();
+    if (token !== deliveryQueryToken) return;
     renderDeliveryRows();
     if (wasLoaded) {
       document.querySelectorAll("#delivery-rows [data-entry-id]").forEach((row) => {
         if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
       });
     }
-    document.querySelector("#delivery-more").classList.toggle("hidden", page === "deliveries.html"
+    document.querySelector("#delivery-more")?.classList.toggle("hidden", page === "deliveries.html"
       ? deliveryOffset >= deliveryTotalCount
       : pageRows.length < PAGE_SIZE);
   } catch (error) {
@@ -2917,6 +2945,44 @@ function deliveryActions(row) {
   return "";
 }
 
+function renderProductionGoodsChips(rows) {
+  const root = document.querySelector("#production-goods-chips");
+  if (!root) return;
+  const counts = {
+    pending: rows.filter((row) => !deliveryGoodsStatus(row) || ["partial", "not_ready"].includes(deliveryGoodsStatus(row))).length,
+    ready: rows.filter((row) => deliveryGoodsStatus(row) === "ready").length,
+    partial: rows.filter((row) => deliveryGoodsStatus(row) === "partial").length,
+    not_ready: rows.filter((row) => deliveryGoodsStatus(row) === "not_ready").length,
+    all: rows.length
+  };
+  const chips = [
+    ["pending", "Pending", "pending"],
+    ["ready", "Ready", "ready"],
+    ["partial", "Partially ready", "partial"],
+    ["not_ready", "Not ready", "not-ready"],
+    ["all", "All", "all"]
+  ];
+  root.replaceChildren(...chips.map(([value, label, style]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `production-goods-chip production-goods-chip-${style}${productionGoodsFilter === value ? " is-active" : ""}`;
+    button.dataset.goodsFilter = value;
+    button.setAttribute("aria-pressed", String(productionGoodsFilter === value));
+    button.setAttribute("aria-label", `${label} ${counts[value]}`);
+    const name = document.createElement("span");
+    name.textContent = label;
+    const count = document.createElement("span");
+    count.className = "production-goods-chip-count";
+    count.textContent = String(counts[value]);
+    button.append(name, count);
+    button.addEventListener("click", () => {
+      productionGoodsFilter = value;
+      renderDeliveryRows();
+    });
+    return button;
+  }));
+}
+
 function renderDeliveryRows() {
   const tbody = document.querySelector("#delivery-rows");
   const dispatchValues = new Map([...tbody.querySelectorAll("[data-transport]")].map((select) => [
@@ -2927,27 +2993,48 @@ function renderDeliveryRows() {
     }
   ]));
   const query = document.querySelector("#delivery-search")?.value.trim().toLowerCase() || "";
-  const filtered = sortRows(deliveryRows.filter((row) => {
+  const productionSalesperson = document.querySelector("#production-salesperson-filter")?.value || "";
+  const matchingRows = deliveryRows.filter((row) => {
+    if (page === "production-store.html") {
+      const salesperson = deliverySalespersonName(row);
+      return (!productionSalesperson || salesperson === productionSalesperson)
+        && (!query || [salesperson, ...deliverySoNumbers(row), row.client_name]
+          .some((value) => String(value || "").toLowerCase().includes(query)));
+    }
     if (!query) return true;
     const searchable = page === "deliveries.html"
       ? [row.client_name, ...deliverySoNumbers(row)]
       : [row.ref_no, row.client_name, row.contact_name];
     return searchable.some((value) => String(value || "").toLowerCase().includes(query));
-  }));
+  });
+  if (page === "production-store.html") renderProductionGoodsChips(matchingRows);
+  const visibleRows = page === "production-store.html"
+    ? matchingRows.filter((row) => {
+      const status = deliveryGoodsStatus(row);
+      if (productionGoodsFilter === "pending") return !status || status === "partial" || status === "not_ready";
+      if (productionGoodsFilter === "all") return true;
+      return status === productionGoodsFilter;
+    })
+    : matchingRows;
+  const filtered = page === "production-store.html" ? visibleRows : sortRows(visibleRows);
   tbody.innerHTML = filtered.map((row) => {
     const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}`;
     const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
-    const deliveryColumns = page === "deliveries.html"
+    const deliveryColumns = page === "production-store.html"
+      ? `<td><strong>${escapeHtml(row.ref_no || "—")}</strong></td><td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(deliverySalespersonName(row))}</td><td>${escapeHtml(row.client_name || "—")}${row.contact_number ? `<br><small class="muted">${escapeHtml(row.contact_number)}</small>` : ""}</td>${itemsCell}<td>${deliveryGoodsStatus(row)
+        ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
+        : "—"}</td>`
+      : page === "deliveries.html"
       ? `<td>${clientContact}</td><td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td><td>${deliverySoNumberCell(row)}</td>${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
         ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
         : "—"}</td>`
       : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
     return `<tr data-entry-id="${escapeHtml(row.id)}">
-      <td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date || "—")}<br>${row.delivery_date ? escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time)) : "—"}</td>
+      <td>${escapeHtml(row.sr)}</td>${page === "production-store.html" ? "" : `<td>${escapeHtml(row.delivery_date || "—")}<br>${row.delivery_date ? escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time)) : "—"}</td>`}
       ${deliveryColumns}
       <td><span class="${row.handoff_status === "pending_details" ? "delivery-status-orange" : row.production_status === "Ready" ? "delivery-status-green" : "delivery-status-red"}">${row.handoff_status === "pending_details" ? "Awaiting salesperson" : escapeHtml(row.production_status)}</span>${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>
       <td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>
-      <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" && deliveryGoodsStatus(row) === "ready" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && row.created_by === profile.id && row.handoff_status === "pending_details" ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td></tr>`;
+      <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" && deliveryGoodsStatus(row) === "ready" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && row.created_by === profile.id ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td></tr>`;
   }).join("");
   initializeScrollableTables(tbody.closest("table"));
   dispatchValues.forEach((values, id) => {
@@ -2960,9 +3047,40 @@ function renderDeliveryRows() {
     if (vehicle && [...vehicle.options].some((option) => option.value === values.vehicle)) vehicle.value = values.vehicle;
   });
   const emptyState = document.querySelector("#delivery-empty");
-  emptyState.textContent = page === "deliveries.html"
-    ? "No deliveries match these filters."
-    : "No delivery requests found.";
+  if (page === "production-store.html" && !filtered.length) {
+    emptyState.replaceChildren();
+    if (!matchingRows.length) {
+      emptyState.textContent = "No matching deliveries";
+    } else {
+      const selectedLabel = ({
+        pending: "pending",
+        ready: "ready",
+        partial: "partially ready",
+        not_ready: "not ready",
+        all: "matching"
+      })[productionGoodsFilter];
+      emptyState.append(document.createTextNode(`No ${selectedLabel} deliveries.`));
+      const readyCount = matchingRows.filter((row) => deliveryGoodsStatus(row) === "ready").length;
+      if (readyCount) {
+        emptyState.append(document.createElement("br"), document.createTextNode(`${readyCount} are ready, `));
+        const viewReady = document.createElement("button");
+        viewReady.type = "button";
+        viewReady.className = "quiet production-ready-link";
+        viewReady.textContent = "view them";
+        viewReady.addEventListener("click", () => {
+          productionGoodsFilter = "ready";
+          renderDeliveryRows();
+        });
+        emptyState.append(viewReady);
+      }
+    }
+  } else if (page === "production-store.html") {
+    emptyState.replaceChildren();
+  } else {
+    emptyState.textContent = page === "deliveries.html"
+      ? "No deliveries match these filters."
+      : "No delivery requests found.";
+  }
   emptyState.classList.toggle("hidden", filtered.length > 0);
   if (page === "deliveries.html") {
     const countLabel = deliveryTotalCount === 1 ? "delivery" : "deliveries";
@@ -3252,9 +3370,22 @@ async function initDeliveries() {
   await refreshAssignedPendingDeliveries();
   if (profile.role === "dispatch" || profile.role === "admin") await loadActiveVehicles();
   if (page === "deliveries.html") await initializeDeliveryFilters();
-  document.querySelector("#delivery-search").addEventListener("input", debounce(() => { void loadDeliveries(true); }));
+  const searchInput = document.querySelector("#delivery-search");
+  searchInput.addEventListener("input", page === "production-store.html"
+    ? debounce(renderDeliveryRows, 200)
+    : debounce(() => { void loadDeliveries(true); }));
   document.querySelector("#delivery-status-filter")?.addEventListener("change", () => { void loadDeliveries(true); });
-  document.querySelector("#delivery-more").addEventListener("click", () => { void loadDeliveries(false); });
+  document.querySelector("#delivery-more")?.addEventListener("click", () => { void loadDeliveries(false); });
+  if (page === "production-store.html") {
+    const salespersonFilter = document.querySelector("#production-salesperson-filter");
+    salespersonFilter.addEventListener("change", renderDeliveryRows);
+    document.querySelector("#production-filter-reset").addEventListener("click", () => {
+      searchInput.value = "";
+      salespersonFilter.value = "";
+      productionGoodsFilter = DEFAULT_GOODS_FILTER;
+      renderDeliveryRows();
+    });
+  }
   document.querySelector("#delivery-item-add").addEventListener("click", () => {
     deliveryItemsState.lines.push({ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" });
     renderItemLineEditor();

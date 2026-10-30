@@ -21,10 +21,13 @@
       </form>
     </section>
     <section class="panel">
-      <div class="section-heading"><h2>Delivery requests</h2><select id="delivery-status-filter" aria-label="Filter deliveries"><option value="">All deliveries</option><option>Not ready</option><option>Ready</option><option>Not delivered</option><option>Delivered</option></select></div>
-      <div class="toolbar"><input id="delivery-search" placeholder="Search reference or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
-      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th data-sort="ref_no">Ref no</th><th data-sort="created_at">Requested</th><th>Client / contact</th><th>Items</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
-      <p id="delivery-empty" class="empty-state hidden">No delivery requests found.</p>
+      <div class="section-heading"><h2>Delivery requests</h2></div>
+      <div class="production-store-filters">
+        <div class="production-store-filter-row"><input id="delivery-search" placeholder="Search salesperson, SO number or client"><select id="production-salesperson-filter" aria-label="Filter by salesperson"><option value="">All salespeople</option></select><button type="button" class="secondary" id="production-filter-reset">Reset</button></div>
+        <div id="production-goods-chips" class="production-goods-chips" role="group" aria-label="Filter by goods status"></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>SR</th><th>Deliveries</th><th>SO number</th><th>Salesperson</th><th>Client name</th><th>Items</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <p id="delivery-empty" class="empty-state hidden">No matching deliveries</p>
     </section>
   </main>
   <dialog id="delivery-items-dialog" class="line-editor-dialog delivery-items-dialog">
