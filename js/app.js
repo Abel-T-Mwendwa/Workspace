@@ -16,6 +16,9 @@ let session;
 let profile;
 let allRows = [];
 let allChanges = [];
+let allWorkNotes = [];
+let workNotesByRequest = new Map();
+let activeWorkNoteRequestId = null;
 let users = [];
 let deliveryRows = [];
 let deliveryTotalCount = 0;
@@ -894,6 +897,145 @@ async function loadArtworks() {
   return allRows;
 }
 
+async function loadWorkNotes() {
+  const requestIds = allRows.map((row) => row.id);
+  if (!requestIds.length) {
+    allWorkNotes = [];
+    workNotesByRequest = new Map();
+    return allWorkNotes;
+  }
+  const { data, error } = await client.from("artwork_work_notes")
+    .select("id,request_id,author_id,author_name,author_role,message,created_at")
+    .in("request_id", requestIds).order("created_at", { ascending: true });
+  if (error) throw error;
+  allWorkNotes = data || [];
+  workNotesByRequest = new Map();
+  allWorkNotes.forEach((note) => workNotesByRequest.set(note.request_id, [
+    ...(workNotesByRequest.get(note.request_id) || []), note
+  ]));
+  return allWorkNotes;
+}
+
+function workNotesFor(requestId) {
+  return workNotesByRequest.get(requestId) || [];
+}
+
+function workNotePreviewMarkup(requestId, salesperson = false) {
+  const latest = workNotesFor(requestId).at(-1);
+  const text = latest?.message || "";
+  const preview = text.length > 30 ? `${text.slice(0, 30).trimEnd()}…` : text || (salesperson ? "No note yet" : "Add note");
+  const unread = salesperson && latest?.author_role === "designer"
+    ? '<span class="badge change" title="New designer note">New</span>' : "";
+  const requestAttribute = salesperson ? "data-request-id" : "data-work-notes";
+  return `<button type="button" class="quiet work-note-preview" ${requestAttribute}="${escapeHtml(requestId)}" title="${escapeHtml(text || (salesperson ? "No note yet" : "Add note"))}">${escapeHtml(preview)}${unread}</button>`;
+}
+
+function workNoteMessageMarkup(message) {
+  const text = String(message ?? "");
+  const matches = [...text.matchAll(/https?:\/\/[^\s<>"']+/gi)];
+  let html = "";
+  let cursor = 0;
+  for (const match of matches) {
+    html += escapeHtml(text.slice(cursor, match.index));
+    let url = match[0];
+    let suffix = "";
+    while (/[.,!?;:)\]]$/.test(url)) {
+      suffix = url.slice(-1) + suffix;
+      url = url.slice(0, -1);
+    }
+    const safeUrl = escapeHtml(url);
+    html += `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>${escapeHtml(suffix)}`;
+    cursor = match.index + match[0].length;
+  }
+  return html + escapeHtml(text.slice(cursor));
+}
+
+function workNoteThreadMarkup(requestId) {
+  const notes = workNotesFor(requestId);
+  return notes.length ? notes.map((note) => `<article class="change-item work-note-entry"${note.author_role === "salesperson" ? ' style="background:#f3f7ff;border-left-color:var(--blue)"' : ""}>
+    <p class="work-note-message">${workNoteMessageMarkup(note.message)}</p>
+    <small>${escapeHtml(note.author_name)} · ${note.author_role === "designer" ? "Designer" : "Salesperson"} · ${escapeHtml(localDateTime(note.created_at))}</small>
+  </article>`).join("") : '<p class="empty-state">No work notes yet.</p>';
+}
+
+function openWorkNotes(requestId, authorRole) {
+  const row = allRows.find((item) => item.id === requestId);
+  if (!row) return toast("This artwork request is no longer available.", "error");
+  activeWorkNoteRequestId = requestId;
+  const prefix = authorRole === "designer" ? "designer" : "sales";
+  const dialog = document.querySelector(`#${prefix}-work-notes-dialog`);
+  const textarea = document.querySelector(`#${prefix}-work-notes-message`);
+  const saveButton = document.querySelector(`#${prefix}-work-notes-save`);
+  const canWrite = authorRole === "salesperson"
+    || (row.assigned_designer === profile.id && row.status === "In progress");
+  textarea.value = "";
+  textarea.disabled = !canWrite;
+  saveButton.disabled = true;
+  document.querySelector(`#${prefix}-work-notes-thread`).innerHTML = workNoteThreadMarkup(requestId);
+  if (authorRole === "designer") {
+    document.querySelector("#designer-work-notes-locked").classList.toggle("hidden", canWrite);
+  }
+  dialog.showModal();
+  if (canWrite) textarea.focus();
+}
+
+function bindWorkNotes(authorRole) {
+  const prefix = authorRole === "designer" ? "designer" : "sales";
+  const dialog = document.querySelector(`#${prefix}-work-notes-dialog`);
+  const form = document.querySelector(`#${prefix}-work-notes-form`);
+  const textarea = document.querySelector(`#${prefix}-work-notes-message`);
+  const saveButton = document.querySelector(`#${prefix}-work-notes-save`);
+  const updateSaveButton = () => {
+    saveButton.disabled = textarea.disabled || !textarea.value.trim() || textarea.value.trim().length > 2000;
+  };
+  textarea.addEventListener("input", updateSaveButton);
+  document.querySelector(`#${prefix}-work-notes-close`).addEventListener("click", () => dialog.close());
+  document.querySelector(`#${prefix}-work-notes-discard`).addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.addEventListener("close", () => {
+    form.reset();
+    textarea.disabled = false;
+    saveButton.disabled = true;
+    activeWorkNoteRequestId = null;
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveWorkNote(authorRole, textarea, saveButton, dialog);
+  });
+}
+
+async function saveWorkNote(authorRole, textarea, saveButton, dialog) {
+  const message = textarea.value.trim();
+  if (!activeWorkNoteRequestId || !message || message.length > 2000) return updateWorkNoteSaveButton(textarea, saveButton);
+  const requestId = activeWorkNoteRequestId;
+  saveButton.disabled = true;
+  try {
+    const { data, error } = await client.from("artwork_work_notes").insert({
+      request_id: requestId,
+      author_id: profile.id,
+      author_name: profile.full_name,
+      author_role: authorRole,
+      message
+    }).select("id,request_id,author_id,author_name,author_role,message,created_at").single();
+    if (error) throw error;
+    allWorkNotes.push(data);
+    workNotesByRequest.set(requestId, [...workNotesFor(requestId), data]);
+    dialog.close();
+    if (page === "sales.html") renderSales();
+    else void renderDesigner();
+    toast("Work note saved.");
+  } catch (error) {
+    toast(error.message || "Could not save the work note.", "error");
+    updateWorkNoteSaveButton(textarea, saveButton);
+  }
+}
+
+function updateWorkNoteSaveButton(textarea, saveButton) {
+  saveButton.disabled = textarea.disabled || !textarea.value.trim() || textarea.value.trim().length > 2000;
+}
+
 function dateKey(value) {
   if (!value) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value);
@@ -971,6 +1113,7 @@ function bindPeriodSummary(periodId, update) {
 async function initSales() {
   document.querySelector("#current-user").textContent = profile.full_name;
   const [rows, loadedUsers] = await Promise.all([loadArtworks(), loadUsers()]);
+  await loadWorkNotes();
   bindSortableHeaders();
   renderSalesTallies();
   renderSales();
@@ -979,6 +1122,12 @@ async function initSales() {
   document.querySelector("#sales-status").addEventListener("change", renderSales);
   document.querySelector("#new-request").addEventListener("click", () => openRequestEditor());
   document.querySelector("#change-form").addEventListener("submit", saveChange);
+  bindWorkNotes("salesperson");
+  document.querySelector("#sales-rows").addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const trigger = event.target.closest("[data-request-id]");
+    if (trigger) openWorkNotes(trigger.dataset.requestId, "salesperson");
+  });
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
   document.addEventListener("click", (event) => {
     if (donePopoverTrigger && !event.target.closest("#done-time-popover, .done-time-trigger")) closeDonePopover();
@@ -1015,7 +1164,7 @@ function renderSales() {
     <td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(profile.full_name)}</td><td>${escapeHtml(row.client_name)}</td><td>${escapeHtml(artworkReferenceLabel(row))}</td>
     <td>${lineFieldMarkup("product", row.product, { mode: row.status === "Requested" ? "edit" : "view", recordId: row.id, direct: row.status === "Requested" })}</td>
     <td>${brandingFieldMarkup(row.branding_details, { mode: row.status === "Requested" ? "edit" : "view", recordId: row.id, direct: row.status === "Requested" })}</td>
-    <td>${localDate(row.date_needed)}</td><td>${escapeHtml(preferredDesignerName(row))}</td>
+    <td>${localDate(row.date_needed)}</td><td>${escapeHtml(preferredDesignerName(row))}</td><td>${workNotePreviewMarkup(row.id, true)}</td>
     <td>${row.status === "Done" ? `<button type="button" class="badge done done-time-trigger" data-done-time="${escapeHtml(row.completed_at || "")}" aria-expanded="false" aria-label="Done status, show completion time">Done</button> <span title="Designer marked this done">✓</span>` : statusBadge(row.status)}</td>
     <td>${row.status === "Done" && row.completed_at ? escapeHtml(localDateTime(row.completed_at)) : "—"}</td>
     <td><div class="table-actions">
@@ -1277,10 +1426,12 @@ async function showHistory(artworkId) {
 async function initDesigner() {
   document.querySelector("#current-user").textContent = profile.full_name;
   await Promise.all([loadUsers(), loadArtworks(), loadAssignmentNotifications()]);
+  await loadWorkNotes();
   bindSortableHeaders();
   renderDesignerTallies();
   document.querySelector("#designer-period").addEventListener("change", () => { void renderDesignerTallies(); });
   renderDesigner();
+  bindWorkNotes("designer");
   document.querySelector("#designer-filter").addEventListener("change", renderDesigner);
   const designerSearch = document.querySelector("#designer-search");
   const designerSearchClear = document.querySelector("#designer-search-clear");
@@ -1298,6 +1449,11 @@ async function initDesigner() {
   const designerRows = document.querySelector("#designer-rows");
   designerRows.addEventListener("click", (event) => {
     if (!(event.target instanceof Element)) return;
+    const noteTrigger = event.target.closest("[data-work-notes]");
+    if (noteTrigger) {
+      openWorkNotes(noteTrigger.dataset.workNotes, "designer");
+      return;
+    }
     const trigger = event.target.closest("[data-change-request]");
     if (trigger) openDesignerChangeDialog(trigger, trigger.textContent);
   });
@@ -1430,11 +1586,10 @@ async function renderDesigner() {
         <td>${changes.length === 0 ? "—" : pendingChanges.length === 0
           ? statusBadge("Change done")
           : `${statusBadge("Change requested")}${pendingChanges.filter((change) => change.change_text?.trim()).map((change) => `<div class="change-item"><button type="button" class="designer-change-request" data-change-request title="Click to view" aria-haspopup="dialog">${escapeHtml(change.change_text)}</button><small>${escapeHtml(change.requested_by)} · ${localDate(change.requested_on)}</small></div>`).join("")}`}</td>
-        <td><textarea data-notes="${escapeHtml(row.id)}" rows="2" placeholder="Designer notes or final file URL" ${claimed ? "" : "disabled"}>${escapeHtml(row.designer_notes)}</textarea></td>
+        <td>${workNotePreviewMarkup(row.id)}</td>
         <td>${escapeHtml(preferredDesignerName(row))}${assignedIds.has(row.id) ? '<br><span class="badge assignment-badge">New assignment</span>' : ""}</td>
         <td><div class="table-actions">${canStart ? `<button class="primary" data-start="${escapeHtml(row.id)}">Start</button>` : ""}
         ${claimed && row.status !== "Done" ? `<button class="secondary" data-done="${escapeHtml(row.id)}">Done</button>` : ""}
-        ${claimed ? `<button class="quiet" data-notes-save="${escapeHtml(row.id)}">Save notes</button>` : ""}
         <button class="secondary" data-history="${escapeHtml(row.id)}">History</button></div></td></tr>`;
     }).join("");
     initializeScrollableTables(tbody.closest("table"));
@@ -1451,10 +1606,6 @@ async function renderDesigner() {
       : "";
     tbody.querySelectorAll("[data-start]").forEach((button) => button.addEventListener("click", () => updateArtwork(button.dataset.start, { status: "In progress", assigned_designer: profile.id }, button, "Job started.")));
     tbody.querySelectorAll("[data-done]").forEach((button) => button.addEventListener("click", () => updateArtwork(button.dataset.done, { status: "Done", done_at: new Date().toISOString(), done_by: profile.id }, button, "Artwork marked done.")));
-    tbody.querySelectorAll("[data-notes-save]").forEach((button) => button.addEventListener("click", () => {
-      const notes = tbody.querySelector(`[data-notes="${CSS.escape(button.dataset.notesSave)}"]`).value;
-      updateArtwork(button.dataset.notesSave, { designer_notes: notes }, button, "Notes saved.");
-    }));
     tbody.querySelectorAll("[data-history]").forEach((button) => button.addEventListener("click", () => showHistory(button.dataset.history)));
   } catch (error) {
     toast(error.message || "Could not load the designer queue.", "error");
@@ -1480,6 +1631,8 @@ function subscribeToChanges() {
   const channel = client.channel(`artwork-${profile.id}`).on("postgres_changes", { event: "*", schema: "public", table: "artwork_requests" }, () => {
     void refreshArtworks();
   }).on("postgres_changes", { event: "*", schema: "public", table: "artwork_changes" }, () => {
+    void refreshArtworks();
+  }).on("postgres_changes", { event: "*", schema: "public", table: "artwork_work_notes" }, () => {
     void refreshArtworks();
   });
   if (page === "designer.html") {
@@ -1508,6 +1661,7 @@ async function refreshArtworks() {
     loadArtworks(),
     page === "designer.html" ? loadAssignmentNotifications() : Promise.resolve()
   ]);
+  if (page === "designer.html" || page === "sales.html") await loadWorkNotes();
   if (page === "sales.html") {
     renderSalesTallies();
     renderSales();
