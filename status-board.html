@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="application-name" content="Workspace"><title>Status board | Promo Kings Workspace</title><link rel="icon" href="images/promo-kings-logo.svg"><link rel="stylesheet" href="css/styles.css"><link rel="stylesheet" href="css/polish.css"></head>
+<body>
+  <header id="app-header" class="topbar"></header>
+  <main class="page status-board-page">
+    <div class="page-heading status-board-heading">
+      <div><p class="eyebrow">COMPANY WORKFLOW</p><h1>Status board</h1><p class="muted">Delivery requests from production store to delivered. Read only.</p></div>
+      <div class="status-board-heading-controls">
+        <span id="status-board-updated" class="muted" aria-live="polite">Updated --:--</span>
+        <button type="button" class="secondary" id="status-board-refresh">Refresh</button>
+        <button type="button" class="secondary" id="status-board-display-mode" aria-pressed="false">Display mode</button>
+      </div>
+    </div>
+    <div class="status-board-tabs" role="tablist" aria-label="Status board sections">
+      <button type="button" role="tab" id="status-tab-deliveries" aria-controls="status-panel-deliveries" aria-selected="true">Deliveries</button>
+      <button type="button" role="tab" id="status-tab-artworks" aria-controls="status-panel-artworks" aria-selected="false" tabindex="-1">Artworks</button>
+      <button type="button" role="tab" id="status-tab-riders" aria-controls="status-panel-riders" aria-selected="false" tabindex="-1">Riders</button>
+    </div>
+    <section id="status-panel-deliveries" role="tabpanel" aria-labelledby="status-tab-deliveries">
+      <section class="status-board-summary" id="status-board-summary" aria-label="Delivery summary"></section>
+      <section class="panel status-board-filters">
+        <div class="status-board-filter-row"><label>Search<input id="status-board-search" type="search" placeholder="SR, DL reference, SO number, client or salesperson"></label><label>Salesperson<select id="status-board-salesperson"><option value="">All salespeople</option></select></label><button type="button" class="secondary" id="status-board-reset">Reset</button></div>
+        <div class="status-board-date-card">
+          <span class="status-board-date-label">Delivered date range</span>
+          <div class="status-board-date-row">
+            <label>From<input id="status-board-date-from" type="date"></label>
+            <label>To<input id="status-board-date-to" type="date"></label>
+            <button type="button" class="secondary" data-date-range="today">Today</button>
+            <button type="button" class="secondary" data-date-range="week">Last 7 days</button>
+            <button type="button" class="secondary" data-date-range="month">This month</button>
+            <p id="status-board-date-count" class="muted" aria-live="polite"></p>
+          </div>
+        </div>
+      </section>
+      <div id="status-board-stage-tabs" class="status-board-stage-tabs" role="tablist" aria-label="Delivery stages"></div>
+      <div id="status-board-dispatch-filters" class="status-board-dispatch-filters hidden" aria-label="Filter by dispatch status"></div>
+      <div id="status-board-kanban" class="status-board-kanban" aria-label="Delivery requests by stage"></div>
+      <section id="status-board-stage-table-panel" class="panel hidden">
+        <div class="table-wrap"><table class="status-board-table"><thead id="status-board-table-head"></thead><tbody id="status-board-table-body"></tbody></table></div>
+        <p id="status-board-table-empty" class="empty-state hidden">Nothing here</p>
+      </section>
+    </section>
+    <section id="status-panel-artworks" class="panel status-board-coming hidden" role="tabpanel" aria-labelledby="status-tab-artworks" hidden>Coming next: this view will be added after the Deliveries board is approved.</section>
+    <section id="status-panel-riders" class="panel status-board-coming hidden" role="tabpanel" aria-labelledby="status-tab-riders" hidden>Coming next: this view will be added after the Deliveries board is approved.</section>
+  </main>
+  <dialog id="status-board-dialog" class="status-board-dialog">
+    <div class="section-heading"><h2 id="status-board-dialog-title">Delivery timeline</h2><button type="button" class="icon-button" data-status-dialog-close aria-label="Close">×</button></div>
+    <div id="status-board-timeline"></div>
+    <div class="dialog-actions"><button type="button" class="primary" data-status-dialog-close>Close</button></div>
+  </dialog>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
+</body>
+</html>

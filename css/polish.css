@@ -741,6 +741,26 @@ textarea:focus {
   scrollbar-width: thin;
 }
 
+#delivery-role-status-chips .production-goods-chip,
+#route-admin-panel .route-filter-chips .production-goods-chip {
+  min-height: 44px;
+}
+
+#route-admin-panel .route-chip-filter {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #36445c;
+}
+
+#route-admin-panel .route-filter-chips {
+  flex-wrap: wrap;
+  overflow: visible;
+  padding-bottom: 0;
+}
+
 .production-goods-chip {
   display: inline-flex;
   align-items: center;
@@ -812,6 +832,381 @@ textarea:focus {
   padding: 0 3px;
   color: var(--blue);
   text-decoration: underline;
+}
+
+.status-board-page {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.status-board-heading,
+.status-board-date-fields,
+.status-board-date-actions,
+.status-board-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-board-filter-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 280px) auto;
+  align-items: end;
+}
+
+.status-board-filter-row label,
+.status-board-date-fields label {
+  min-width: 0;
+}
+
+.status-board-filter-row input,
+.status-board-filter-row select,
+.status-board-date-fields input {
+  width: 100%;
+  min-height: 44px;
+}
+
+.status-board-date-card {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.status-board-date-fields {
+  flex-wrap: wrap;
+}
+
+.status-board-date-fields label {
+  width: min(220px, 100%);
+}
+
+.status-board-date-actions {
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.status-board-date-actions button,
+.status-board-tabs button,
+.status-board-stage-tab,
+.status-board-dispatch-chip {
+  min-height: 44px;
+}
+
+.status-board-date-card p {
+  margin: 10px 0 0;
+}
+
+.status-board-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 9px;
+  margin: 14px 0;
+}
+
+.status-board-summary-card {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f5f8fc;
+}
+
+.status-board-summary-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-board-summary-card strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 23px;
+}
+
+.status-board-summary-red { background: #fff3f3; }
+.status-board-summary-green { background: #eff9f3; }
+.status-board-summary-orange { background: #fff7ed; }
+.status-board-summary-purple { background: #f6f1ff; }
+.status-board-summary-blue { background: #f1f6ff; }
+
+.status-board-tabs,
+.status-board-stage-tabs,
+.status-board-dispatch-filters {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+  scrollbar-width: thin;
+}
+
+.status-board-tabs {
+  margin: 12px 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.status-board-tabs [role="tab"] {
+  flex: 0 0 auto;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.status-board-tabs [aria-selected="true"] {
+  background: #eaf1fd;
+  color: var(--blue);
+  box-shadow: inset 0 -3px var(--blue);
+}
+
+.status-board-coming {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-weight: 650;
+}
+
+.status-board-stage-tabs {
+  margin: 12px 0;
+}
+
+.status-board-stage-tab {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.status-board-stage-tab[aria-selected="true"] {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.status-board-kanban {
+  display: grid;
+  grid-auto-columns: minmax(245px, 1fr);
+  grid-auto-flow: column;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 2px 1px 12px;
+  align-items: start;
+}
+
+.status-board-column {
+  min-width: 0;
+  min-height: 220px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f7f9fc;
+}
+
+.status-board-column header {
+  min-height: 58px;
+  border-bottom: 1px solid var(--border);
+}
+
+.status-board-column h2 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+
+.status-board-column h2 span {
+  color: var(--blue);
+  font-size: 14px;
+}
+
+.status-board-column header p {
+  margin: 6px 0 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-board-column-cards {
+  display: grid;
+  gap: 9px;
+  padding-top: 10px;
+}
+
+.status-board-card {
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.status-board-card:hover,
+.status-board-card:focus-visible {
+  outline: 2px solid #2864c555;
+}
+
+.status-board-card-heading,
+.status-board-card-badges {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.status-board-card-heading strong {
+  overflow-wrap: anywhere;
+}
+
+.status-board-card-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-board-card-client {
+  margin-top: 7px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.status-board-card-meta {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.status-board-card-badges {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+
+.status-board-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eff3f8;
+  color: #58677c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-board-status-green { background: #e4f6ee; color: var(--green); }
+.status-board-status-red { background: #fff0f1; color: var(--red); }
+.status-board-status-orange { background: #fff1df; color: #ea580c; }
+.status-board-status-purple { background: #f1eaff; color: #56369a; }
+.status-board-status-blue { background: #e9f0ff; color: #2856a1; }
+.status-board-status-teal { background: #e3f7f5; color: #087c72; }
+.status-board-status-grey { background: #eff3f8; color: #58677c; }
+
+.status-board-nothing {
+  padding: 16px 6px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.status-board-dispatch-filters {
+  margin: 0 0 10px;
+}
+
+.status-board-dispatch-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.status-board-dispatch-chip[aria-pressed="true"] {
+  border-color: var(--blue);
+  background: #eaf1fd;
+  color: var(--blue);
+}
+
+.status-board-table tr {
+  cursor: pointer;
+}
+
+.status-board-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.status-board-timeline-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 76px;
+  color: var(--muted);
+}
+
+.status-board-timeline-step:not(:last-child)::before {
+  position: absolute;
+  top: 24px;
+  bottom: 0;
+  left: 12px;
+  width: 2px;
+  background: var(--border);
+  content: "";
+}
+
+.status-board-timeline-marker {
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #eff3f8;
+  font-weight: 800;
+}
+
+.status-board-timeline-step.is-complete .status-board-timeline-marker {
+  background: #e4f6ee;
+  color: var(--green);
+}
+
+.status-board-timeline-step.is-current {
+  color: var(--navy);
+}
+
+.status-board-timeline-red .status-board-timeline-marker { background: #fff0f1; color: var(--red); }
+.status-board-timeline-orange .status-board-timeline-marker { background: #fff1df; color: #ea580c; }
+.status-board-timeline-purple .status-board-timeline-marker { background: #f1eaff; color: #56369a; }
+.status-board-timeline-blue .status-board-timeline-marker { background: #e9f0ff; color: #2856a1; }
+.status-board-timeline-green .status-board-timeline-marker { background: #e4f6ee; color: #16734f; }
+
+.status-board-timeline-step > div {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  padding-bottom: 14px;
+}
+
+.status-board-timeline-step small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .status-board-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .status-board-filter-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .status-board-date-fields label {
+    flex: 1 1 140px;
+  }
+
+  .status-board-kanban {
+    grid-auto-columns: minmax(260px, calc(100vw - 56px));
+  }
 }
 
 @media (max-width: 600px) {
@@ -2242,4 +2637,1131 @@ dialog.temporary-password-dialog[open] {
 @keyframes portal-row-highlight {
   from { background: #fff1bf; }
   to { background: transparent; }
+}
+
+@media (min-width: 1600px) {
+  body:has(.status-board-page) .topbar {
+    padding-inline: clamp(2rem, 2.6vw, 6.5rem);
+    background: #56369a;
+  }
+
+  .status-board-page {
+    display: flex;
+    width: 100%;
+    max-width: none;
+    height: calc(100vh - 68px);
+    min-height: 0;
+    flex-direction: column;
+    padding: clamp(1.25rem, 1.8vh, 2.4rem) clamp(2rem, 2.6vw, 6.5rem) 1.25rem;
+    overflow: hidden;
+  }
+
+  .status-board-heading {
+    flex: 0 0 auto;
+    margin: 0 0 clamp(.5rem, .75vh, 1rem);
+  }
+
+  .status-board-heading h1 {
+    font-size: clamp(2rem, 1.55vw, 3.8rem);
+  }
+
+  .status-board-heading .eyebrow {
+    font-size: clamp(.75rem, .42vw, 1rem);
+  }
+
+  .status-board-heading .muted,
+  .status-board-date-card p {
+    font-size: clamp(.9rem, .46vw, 1.2rem);
+  }
+
+  .status-board-tabs button,
+  .status-board-stage-tab,
+  .status-board-dispatch-chip,
+  .status-board-date-actions button,
+  #status-board-reset {
+    min-height: clamp(44px, 2.4vw, 68px);
+    padding: .65em 1.1em;
+    font-size: clamp(.95rem, .52vw, 1.3rem);
+  }
+
+  .status-board-tabs {
+    flex: 0 0 auto;
+    margin: 0 0 clamp(.55rem, .8vh, 1rem);
+  }
+
+  .status-board-tabs [role="tab"] {
+    border-radius: .65rem .65rem 0 0;
+  }
+
+  .status-board-tabs [aria-selected="true"] {
+    background: #f1eaff;
+    color: #56369a;
+    box-shadow: inset 0 -3px #56369a;
+  }
+
+  #status-panel-deliveries {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .status-board-summary {
+    flex: 0 0 auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: clamp(.5rem, .65vw, 1rem);
+    margin: 0 0 clamp(.55rem, .8vh, 1rem);
+  }
+
+  .status-board-summary-card {
+    padding: clamp(.7rem, .8vw, 1.25rem) clamp(.85rem, 1vw, 1.5rem);
+    border-radius: .8rem;
+  }
+
+  .status-board-summary-card span {
+    font-size: clamp(.9rem, .46vw, 1.2rem);
+  }
+
+  .status-board-summary-card strong {
+    margin-top: .3rem;
+    font-size: clamp(2.25rem, 2.3vw, 3.8rem);
+    line-height: 1.05;
+  }
+
+  .status-board-summary-red strong { color: var(--red); }
+  .status-board-summary-green strong { color: var(--green); }
+  .status-board-summary-orange strong { color: #ea580c; }
+  .status-board-summary-purple strong { color: #56369a; }
+  .status-board-summary-blue strong { color: var(--blue); }
+
+  .status-board-filters {
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: minmax(18rem, 1.2fr) minmax(12rem, .65fr) minmax(30rem, 1.8fr) auto;
+    align-items: center;
+    gap: clamp(.6rem, .8vw, 1.2rem);
+    margin: 0 0 clamp(.45rem, .7vh, .9rem);
+    padding: clamp(.7rem, .8vw, 1.15rem);
+    border-radius: .9rem;
+  }
+
+  .status-board-filter-row {
+    display: contents;
+  }
+
+  .status-board-filter-row > label:first-child { grid-column: 1; }
+  .status-board-filter-row > label:nth-child(2) { grid-column: 2; }
+
+  .status-board-filter-row > label,
+  .status-board-date-fields label {
+    font-size: clamp(.85rem, .44vw, 1.15rem);
+  }
+
+  .status-board-filter-row input,
+  .status-board-filter-row select,
+  .status-board-date-fields input {
+    min-height: clamp(44px, 2.2vw, 64px);
+    font-size: clamp(.95rem, .5vw, 1.25rem);
+  }
+
+  #status-board-reset {
+    grid-column: 4;
+  }
+
+  .status-board-date-card {
+    display: grid;
+    grid-column: 3;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .45rem .75rem;
+    min-width: 0;
+    margin: 0;
+    padding: .55rem .75rem;
+    border-radius: .8rem;
+  }
+
+  .status-board-date-fields {
+    flex-wrap: nowrap;
+    gap: .55rem;
+  }
+
+  .status-board-date-fields label {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .status-board-date-actions {
+    flex-wrap: nowrap;
+    gap: .4rem;
+    margin: 0;
+  }
+
+  .status-board-date-actions button {
+    padding-inline: .75em;
+    white-space: nowrap;
+  }
+
+  .status-board-date-card p {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .status-board-stage-tabs {
+    flex: 0 0 auto;
+    gap: clamp(.45rem, .6vw, .9rem);
+    margin: 0 0 clamp(.4rem, .65vh, .8rem);
+    padding: 0 0 .35rem;
+    overflow: visible;
+  }
+
+  .status-board-stage-tab,
+  .status-board-dispatch-chip {
+    border-color: #56369a;
+    border-radius: 999px;
+    color: #56369a;
+  }
+
+  .status-board-stage-tab[aria-selected="true"],
+  .status-board-dispatch-chip[aria-pressed="true"] {
+    border-color: #56369a;
+    background: #56369a;
+    color: #fff;
+  }
+
+  .status-board-kanban {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-auto-columns: auto;
+    grid-auto-flow: initial;
+    flex: 1 1 0;
+    gap: clamp(.55rem, .7vw, 1.1rem);
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 0 .25rem;
+    align-items: stretch;
+  }
+
+  .status-board-column {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+    padding: clamp(.75rem, .85vw, 1.3rem);
+    border-radius: .9rem;
+    background: var(--surface);
+    box-shadow: 0 3px 12px #18294a08;
+  }
+
+  .status-board-column header {
+    flex: 0 0 auto;
+    min-height: 0;
+    padding-bottom: .6rem;
+  }
+
+  .status-board-column h2 {
+    font-size: clamp(1.1rem, .74vw, 1.65rem);
+    font-weight: 800;
+  }
+
+  .status-board-column h2 span {
+    font-size: clamp(1.2rem, .85vw, 1.8rem);
+  }
+
+  .status-board-column header p {
+    margin: .45rem 0 0;
+    font-size: clamp(.85rem, .46vw, 1.2rem);
+    line-height: 1.4;
+  }
+
+  .status-board-column-cards {
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: clamp(.5rem, .6vw, .9rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: .65rem .15rem .25rem 0;
+    scrollbar-color: #c4ccda transparent;
+    scrollbar-width: thin;
+  }
+
+  .status-board-column-cards::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .status-board-column-cards::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #c4ccda;
+  }
+
+  .status-board-card {
+    padding: clamp(.75rem, .8vw, 1.2rem);
+    border-radius: .75rem;
+    box-shadow: 0 2px 9px #18294a0a;
+  }
+
+  .status-board-card-heading strong,
+  .status-board-card-client {
+    font-size: clamp(1.15rem, .82vw, 1.75rem);
+    line-height: 1.3;
+  }
+
+  .status-board-card-heading span,
+  .status-board-card-meta {
+    font-size: clamp(.9rem, .46vw, 1.2rem);
+    line-height: 1.4;
+  }
+
+  .status-board-card-client {
+    margin-top: .4rem;
+  }
+
+  .status-board-card-badges {
+    gap: .45rem;
+    margin-top: .65rem;
+  }
+
+  .status-board-status {
+    min-height: 32px;
+    padding: .35rem .7rem;
+    font-size: clamp(.85rem, .46vw, 1.2rem);
+  }
+
+  #status-board-stage-table-panel {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    margin: 0;
+    padding: clamp(.85rem, 1vw, 1.5rem);
+  }
+
+  #status-board-stage-table-panel .table-wrap {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .status-board-table {
+    font-size: clamp(.95rem, .5vw, 1.25rem);
+  }
+
+  .status-board-table th {
+    font-size: clamp(.8rem, .4vw, 1rem);
+  }
+
+  .status-board-coming {
+    min-height: 0;
+    flex: 1 1 auto;
+    font-size: clamp(1.1rem, .75vw, 1.6rem);
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1599px) {
+  body:has(.status-board-page) .topbar {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .status-board-page {
+    width: 100%;
+    max-width: none;
+    padding-inline: clamp(1rem, 2vw, 2rem);
+  }
+
+  .status-board-kanban {
+    height: min(65vh, 44rem);
+  }
+
+  .status-board-kanban {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-auto-columns: auto;
+    grid-auto-flow: initial;
+    overflow: hidden;
+    align-items: stretch;
+  }
+
+  .status-board-column {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    background: var(--surface);
+    box-shadow: 0 3px 12px #18294a08;
+  }
+
+  .status-board-column-cards {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1023px) {
+  body:has(.status-board-page) .topbar {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .status-board-page {
+    width: 100%;
+    max-width: none;
+    padding: 1.5rem clamp(1rem, 2.5vw, 1.75rem) 2rem;
+  }
+
+  .status-board-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .status-board-kanban {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+    grid-auto-columns: auto;
+    grid-auto-flow: row;
+    overflow: visible;
+    align-items: stretch;
+  }
+
+  .status-board-column {
+    min-height: 22rem;
+    background: var(--surface);
+    box-shadow: 0 3px 12px #18294a08;
+  }
+
+  .status-board-column-cards {
+    max-height: 28rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .status-board-card {
+    padding: .9rem;
+  }
+
+  .status-board-card-heading strong,
+  .status-board-card-client {
+    font-size: clamp(1rem, 2vw, 1.2rem);
+  }
+
+  .status-board-card-meta {
+    font-size: clamp(.85rem, 1.7vw, .95rem);
+  }
+}
+
+body:has(.status-board-page) .topbar {
+  background: #56369a;
+}
+
+.status-board-page button,
+.status-board-page input,
+.status-board-page select,
+body:has(.status-board-page) .topbar button {
+  min-height: 44px;
+}
+
+.status-board-column {
+  background: var(--surface);
+  box-shadow: 0 3px 12px #18294a08;
+}
+
+.status-board-stage-tab,
+.status-board-dispatch-chip {
+  border-color: #56369a;
+  border-radius: 999px;
+  color: #56369a;
+}
+
+.status-board-stage-tab[aria-selected="true"],
+.status-board-dispatch-chip[aria-pressed="true"] {
+  border-color: #56369a;
+  background: #56369a;
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  body:has(.status-board-page) {
+    overflow-x: hidden;
+  }
+
+  body:has(.status-board-page) .topbar {
+    min-width: 0;
+    max-width: 100vw;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .status-board-page {
+    width: 100%;
+    max-width: none;
+    padding: 1rem max(12px, env(safe-area-inset-right)) 2rem max(12px, env(safe-area-inset-left));
+    overflow-x: clip;
+  }
+
+  .status-board-heading {
+    margin: 0 0 1rem;
+  }
+
+  .status-board-heading h1 {
+    font-size: clamp(1.6rem, 7vw, 2rem);
+  }
+
+  .status-board-tabs,
+  .status-board-stage-tabs {
+    max-width: 100%;
+    gap: .45rem;
+    margin: .5rem 0 .85rem;
+    overflow-x: auto;
+    padding: .15rem 0 .45rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .status-board-tabs::-webkit-scrollbar,
+  .status-board-stage-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .status-board-tabs button,
+  .status-board-stage-tab,
+  .status-board-dispatch-chip,
+  .status-board-date-actions button,
+  #status-board-reset,
+  #status-board-salesperson {
+    min-height: 44px;
+  }
+
+  .status-board-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .55rem;
+    margin: .65rem 0;
+  }
+
+  .status-board-summary-card {
+    min-width: 0;
+    padding: .7rem;
+  }
+
+  .status-board-summary-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .status-board-summary-card span {
+    font-size: .75rem;
+  }
+
+  .status-board-summary-card strong {
+    font-size: 1.45rem;
+  }
+
+  .status-board-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .7rem;
+    margin: .65rem 0;
+    padding: .85rem;
+  }
+
+  .status-board-filter-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .65rem;
+  }
+
+  .status-board-filter-row label,
+  .status-board-date-fields label {
+    width: 100%;
+    font-size: .8rem;
+  }
+
+  .status-board-filter-row input,
+  .status-board-filter-row select,
+  .status-board-date-fields input {
+    width: 100%;
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  .status-board-date-card {
+    min-width: 0;
+    margin: 0;
+    padding: .7rem;
+  }
+
+  .status-board-date-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .6rem;
+  }
+
+  .status-board-date-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .45rem;
+    margin-top: .65rem;
+  }
+
+  .status-board-date-actions button {
+    flex: 1 1 auto;
+    padding-inline: .7rem;
+  }
+
+  .status-board-date-card p {
+    margin-top: .55rem;
+    font-size: .8rem;
+  }
+
+  .status-board-stage-tabs {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .status-board-stage-tab,
+  .status-board-dispatch-chip {
+    flex: 0 0 auto;
+    border-color: #56369a;
+    border-radius: 999px;
+    color: #56369a;
+    font-size: .8rem;
+    white-space: nowrap;
+  }
+
+  .status-board-stage-tab[aria-selected="true"],
+  .status-board-dispatch-chip[aria-pressed="true"] {
+    border-color: #56369a;
+    background: #56369a;
+    color: #fff;
+  }
+
+  .status-board-kanban {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-columns: auto;
+    grid-auto-flow: row;
+    gap: .7rem;
+    max-width: 100%;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .status-board-column {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    padding: .75rem;
+    border-radius: .75rem;
+    background: var(--surface);
+    box-shadow: 0 3px 12px #18294a08;
+  }
+
+  .status-board-column header {
+    min-height: 0;
+    padding-bottom: .45rem;
+  }
+
+  .status-board-column h2 {
+    font-size: .95rem;
+  }
+
+  .status-board-column header p {
+    margin: .35rem 0 .1rem;
+    font-size: .8rem;
+    line-height: 1.4;
+  }
+
+  .status-board-column-cards {
+    gap: .6rem;
+    padding-top: .55rem;
+  }
+
+  .status-board-card {
+    width: 100%;
+    min-width: 0;
+    padding: .8rem;
+  }
+
+  .status-board-card-heading strong,
+  .status-board-card-client {
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+
+  .status-board-card-meta {
+    font-size: .82rem;
+    line-height: 1.45;
+  }
+
+  .status-board-status {
+    min-height: 32px;
+    padding: .35rem .65rem;
+    font-size: .8rem;
+  }
+
+  .status-board-nothing {
+    padding: .9rem .25rem;
+  }
+}
+
+.status-board-page {
+  width: 100%;
+  max-width: none;
+  padding: 10px clamp(12px, 1.5vw, 22px) 12px;
+}
+
+.status-board-heading {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.status-board-heading-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.status-board-heading-controls .muted {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status-board-heading-controls button,
+.status-board-filter-row input,
+.status-board-filter-row select,
+.status-board-filter-row > button,
+.status-board-date-row input,
+.status-board-date-row button {
+  min-height: 44px;
+  height: 44px;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.status-board-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.status-board-filter-row label,
+.status-board-date-row label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: #36445c;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.status-board-filter-row input,
+.status-board-filter-row select,
+.status-board-date-row input {
+  width: 100%;
+  padding: 0 11px;
+  font-size: 14px;
+}
+
+.status-board-filter-row > button {
+  padding: 0 16px;
+  font-size: 14px;
+}
+
+.status-board-filters {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.status-board-date-card {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.status-board-date-label {
+  color: #36445c;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.status-board-date-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(140px, 180px) auto auto auto minmax(180px, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.status-board-date-row button {
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.status-board-date-row p {
+  align-self: center;
+  margin: 0;
+  font-size: 12px;
+  text-align: left;
+}
+
+.status-board-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.status-board-summary-card {
+  padding: 6px 10px;
+  border-radius: 9px;
+}
+
+.status-board-summary-card span {
+  font-size: 11px;
+}
+
+.status-board-summary-card strong {
+  margin-top: 1px;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.status-board-tabs {
+  gap: 18px;
+  margin: 6px 0 8px;
+  padding: 0 0 3px;
+  border-bottom: 1px solid var(--border);
+}
+
+.status-board-tabs [role="tab"] {
+  min-height: 40px;
+  padding: 5px 2px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.status-board-tabs [aria-selected="true"] {
+  border: 0;
+  border-bottom: 3px solid #5b3fd0;
+  background: transparent;
+  color: #5b3fd0;
+  font-weight: 750;
+  box-shadow: none;
+}
+
+.status-board-stage-tabs {
+  align-items: center;
+  gap: 0;
+  margin: 6px 0;
+  padding: 0 0 2px;
+  border: 0;
+}
+
+.status-board-stage-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #36445c;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status-board-stage-tab[aria-selected="true"] {
+  background: #f0edff;
+  color: #4c32aa;
+}
+
+.status-board-stage-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.status-board-stage-tab[data-stage="production_store"] .status-board-stage-dot { background: #ea580c; }
+.status-board-stage-tab[data-stage="salesperson"] .status-board-stage-dot { background: #7c5cf0; }
+.status-board-stage-tab[data-stage="production"] .status-board-stage-dot { background: #3b82f6; }
+.status-board-stage-tab[data-stage="dispatch"] .status-board-stage-dot { background: #0e7490; }
+.status-board-stage-tab[data-stage="delivered"] .status-board-stage-dot { background: #16a34a; }
+
+.status-board-stage-count {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e7eaf0;
+  color: #36445c;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.status-board-stage-tab[aria-selected="true"] .status-board-stage-count {
+  background: #ded7ff;
+  color: #4c32aa;
+}
+
+.status-board-stage-separator {
+  padding: 0 3px;
+  color: #8792a3;
+  font-size: 20px;
+}
+
+.status-board-kanban {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 0 0 8px;
+  overflow-x: auto;
+}
+
+.status-board-column {
+  display: flex;
+  min-width: 0;
+  min-height: 480px;
+  height: max(480px, calc(100vh - var(--board-top, 350px)));
+  flex-direction: column;
+  padding: 8px 9px;
+  overflow: hidden;
+  border: 0;
+  border-top: 4px solid #64748b;
+  border-radius: 14px;
+  background: #ece9f8;
+  box-shadow: none;
+}
+
+.status-board-column-production_store { border-top-color: #ea580c; }
+.status-board-column-salesperson { border-top-color: #7c5cf0; }
+.status-board-column-production { border-top-color: #3b82f6; }
+.status-board-column-dispatch { border-top-color: #0e7490; }
+.status-board-column-delivered { border-top-color: #16a34a; }
+
+.status-board-column header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 2px 2px 7px;
+  border-bottom: 1px solid #d6d1e6;
+  background: #ece9f8;
+}
+
+.status-board-column h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: .025em;
+}
+
+.status-board-column-count {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff;
+  color: #36445c;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.status-board-column header p {
+  min-height: 14px;
+  margin: 4px 0 0;
+  color: #58677c;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.status-board-column-cards {
+  display: flex;
+  min-height: 0;
+  max-height: none;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 5px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 7px 2px 2px 0;
+}
+
+.status-board-card {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-left: 4px solid var(--status-color, #64748b);
+  border-radius: 8px;
+  background: var(--status-tint, #f1f3f5);
+  color: #17243b;
+  font-size: 12.5px;
+  line-height: 1.2;
+  text-decoration: none;
+  box-shadow: none;
+}
+
+.status-board-card:hover,
+.status-board-card:focus-visible {
+  outline: 2px solid #5b3fd0;
+  outline-offset: 1px;
+  text-decoration: none;
+}
+
+.status-board-card-green { --status-color: #16845b; --status-tint: #f0f8f4; }
+.status-board-card-red { --status-color: #bb3440; --status-tint: #fbf0f1; }
+.status-board-card-orange { --status-color: #ea580c; --status-tint: #fdf2eb; }
+.status-board-card-purple { --status-color: #7c5cf0; --status-tint: #f4f1fe; }
+.status-board-card-blue { --status-color: #3b82f6; --status-tint: #eff5fe; }
+.status-board-card-teal { --status-color: #0e7490; --status-tint: #edf6f8; }
+.status-board-card-grey { --status-color: #64748b; --status-tint: #f1f3f5; }
+
+.status-board-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.status-board-card-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-board-card-client {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-board-card-meta,
+.status-board-card-items {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #36445c;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-board-status {
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.status-board-status-green { background: #a2cebd; color: #0b573b; }
+.status-board-status-red { background: #e4aeb3; color: #7f1d25; }
+.status-board-status-orange { background: #f7bc9e; color: #8a2c00; }
+.status-board-status-purple { background: #cbbef9; color: #4c32aa; }
+.status-board-status-blue { background: #b1cdfb; color: #173b93; }
+.status-board-status-teal { background: #9fc7d3; color: #0b5568; }
+.status-board-status-grey { background: #c1c7d1; color: #3f4b5d; }
+
+.status-board-nothing {
+  align-self: center;
+  margin: auto;
+  padding: 12px 4px;
+  color: #58677c;
+  font-size: 12px;
+  text-align: center;
+}
+
+body:has(.status-board-page) .topbar {
+  background: #56369a;
+}
+
+body.status-board-display-mode #app-header,
+body.status-board-display-mode .status-board-summary {
+  display: none !important;
+}
+
+body.status-board-display-mode .status-board-page {
+  padding-top: 6px;
+}
+
+@media (max-width: 760px) {
+  .status-board-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .status-board-heading-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .status-board-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .status-board-filter-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .status-board-filter-row > button {
+    width: 100%;
+  }
+
+  .status-board-date-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .status-board-date-row button {
+    width: 100%;
+  }
+
+  .status-board-date-row p {
+    width: 100%;
+    padding-top: 2px;
+  }
+
+  .status-board-tabs {
+    gap: 14px;
+  }
+
+  .status-board-kanban {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: row;
+    overflow: visible;
+  }
 }

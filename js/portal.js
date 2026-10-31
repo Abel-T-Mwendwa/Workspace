@@ -59,8 +59,13 @@ export function hasRiderRequestAccess(profile) {
   return profile.role === "user" || profile.role === "salesperson" || profile.rider_request_access === true;
 }
 
+export function canSeeStatusBoard(profile) {
+  return profile.role === "admin";
+}
+
 function pageAllowed(page, profile) {
   const { role } = profile;
+  if (page === "status-board.html") return canSeeStatusBoard(profile);
   if (role === "user") return page === "riders.html";
   if (page === "production-store.html") return hasProductionStoreAccess(profile);
   if (role === "admin") return page !== "my-jobs.html";
@@ -106,6 +111,7 @@ export async function initPortal(client, profile, page, toast) {
   if (profile.role === "admin" && !tabs.some(([, href]) => href === "route-admin.html")) {
     tabs.push(["Route admin", "route-admin.html"]);
   }
+  if (canSeeStatusBoard(profile)) tabs.push(["Status board", "status-board.html"]);
   header.innerHTML = `<a class="portal-logo" href="home.html" aria-label="Promo Kings home"><img src="images/promo-kings-logo.svg" alt="Promo Kings logo"></a>
     <button class="mobile-menu-button" type="button" data-menu-toggle aria-expanded="false" aria-controls="portal-tabs"><span aria-hidden="true">☰</span><span class="menu-button-label">Menu</span></button>
     <nav class="portal-tabs" aria-label="Main navigation">${tabs.map(([label, href]) =>

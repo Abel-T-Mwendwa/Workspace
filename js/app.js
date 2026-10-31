@@ -1,4 +1,4 @@
-import { hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
+import { canSeeStatusBoard, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
 import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./delivery-slots.js";
 import { bindEditorKeyboard } from "./dialog-keyboard.js";
 import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./rider-request-slots.js";
@@ -13,6 +13,63 @@ const DEFAULT_GOODS_FILTER = "pending";
 const LOGIN_AT_KEY = "loginAt";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const STATUS_BOARD_REFRESH_MS = 30000;
+const STATUS_COLOURS = {
+  ready: "green",
+  partial: "orange",
+  not_ready: "red",
+  pending_details: "purple",
+  requested: "blue",
+  pending: "grey",
+  queued: "grey",
+  Pending: "grey",
+  "Not ready": "red",
+  "Partially ready": "orange",
+  Ready: "green",
+  "Awaiting salesperson": "purple",
+  "In production": "blue",
+  "In progress": "blue",
+  Packed: "blue",
+  "Not packed": "orange",
+  "Not delivered": "blue",
+  "On route": "teal",
+  Delivered: "green",
+  "On hold": "orange",
+  Queued: "grey"
+};
+const STATUS_BOARD_STAGES = [
+  ["production_store", "PRODUCTION STORE"],
+  ["salesperson", "SALESPERSON"],
+  ["production", "PRODUCTION"],
+  ["dispatch", "DISPATCH"],
+  ["delivered", "DELIVERED"]
+];
+const DELIVERY_ROLE_STATUS_LABELS = {
+  production: [
+    { value: "pending", label: "Pending", style: "pending" },
+    { value: "Not ready", label: "Not ready", style: "not-ready" },
+    { value: "Ready", label: "Ready", style: "ready" },
+    { value: "all", label: "All", style: "all" }
+  ],
+  dispatch: [
+    { value: "pending", label: "Pending", style: "pending" },
+    { value: "ready-for-delivery", label: "Ready for delivery", style: "ready" },
+    { value: "not-packed", label: "Not packed", style: "partial" },
+    { value: "packed", label: "Packed", style: "ready" },
+    { value: "Not delivered", label: "Not delivered", style: "partial" },
+    { value: "Delivered", label: "Delivered", style: "ready" },
+    { value: "all", label: "All", style: "all" }
+  ]
+};
+const ROUTE_STATUS_CHIPS = [
+  { value: "active", label: "Active", style: "pending" },
+  { value: "Not started", label: "Not started", style: "partial" },
+  { value: "Started", label: "Started", style: "ready" },
+  { value: "In progress", label: "In progress", style: "ready" },
+  { value: "Finished", label: "Finished", style: "ready" },
+  { value: "Declined", label: "Declined", style: "not-ready" },
+  { value: "", label: "All", style: "all" }
+];
 let session;
 let profile;
 let allRows = [];
@@ -22,6 +79,17 @@ let workNotesByRequest = new Map();
 let activeWorkNoteRequestId = null;
 let users = [];
 let deliveryRows = [];
+let deliveryRoleStatusFilter = "pending";
+let routeRiderChipFilter = "__unassigned";
+let routeStatusChipFilter = "active";
+let statusBoardRows = [];
+let statusBoardProfiles = new Map();
+let statusBoardSelectedStage = "all";
+let statusBoardDispatchFilter = "";
+let statusBoardRefreshTimer = null;
+let statusBoardLoading = false;
+let statusBoardUnknownStatuses = new Set();
+let statusBoardReportedIssues = new Set();
 let productionGoodsFilter = DEFAULT_GOODS_FILTER;
 let deliveryTotalCount = 0;
 let assignedPendingDeliveries = [];
@@ -2236,8 +2304,11 @@ async function bootstrap() {
     if (page === "route-admin.html") await initRiders();
     if (page === "vehicles.html") await initVehicles();
     if (page === "my-jobs.html") await initMyJobs();
+    if (page === "status-board.html") await initStatusBoard();
     const openId = new URLSearchParams(location.search).get("open");
-    if (openId) {
+    if (openId && ["deliveries.html", "production-store.html"].includes(page)) {
+      await openDeliveryFromDeepLink(openId);
+    } else if (openId) {
       const row = document.querySelector(`[data-entry-id="${CSS.escape(openId)}"]`);
       if (row) {
         row.classList.add("portal-opened-entry");
@@ -2358,6 +2429,538 @@ function deliveryGoodsStatusLabel(status) {
 
 function deliveryGoodsStatus(row) {
   return row.goods_status || "";
+}
+
+function statusBoardStageOf(row) {
+  if (row.delivered_at) return "delivered";
+  if (row.production_status === "Ready" || row.dispatched_at || row.dispatch_status === "Delivered") return "dispatch";
+  if (!row.goods_status) return "production";
+  if (row.goods_status === "ready" && row.handoff_status === "requested") return "production";
+  if (row.goods_status === "ready" && row.handoff_status === "pending_details") return "salesperson";
+  return ["partial", "not_ready"].includes(row.goods_status) ? "production_store" : "production";
+}
+
+function statusBoardDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(date);
+  return `${parts.find((part) => part.type === "year").value}-${parts.find((part) => part.type === "month").value}-${parts.find((part) => part.type === "day").value}`;
+}
+
+function statusBoardColour(value) {
+  if (!value) return "grey";
+  const colour = STATUS_COLOURS[value];
+  if (!colour) {
+    if (!statusBoardUnknownStatuses.has(value)) {
+      statusBoardUnknownStatuses.add(value);
+      console.warn(`Status board encountered an unmapped status: ${value}`);
+    }
+    return "grey";
+  }
+  return colour;
+}
+
+function statusBoardDisplayStatus(row, stage) {
+  if (stage === "production_store") {
+    return row.goods_status === "ready" ? "Ready"
+      : row.goods_status === "partial" ? "Partially ready"
+        : row.goods_status === "not_ready" ? "Not ready" : row.goods_status || "—";
+  }
+  if (stage === "salesperson") {
+    return row.handoff_status === "pending_details" ? "Awaiting salesperson"
+      : row.handoff_status === "requested" ? "Requested" : row.handoff_status || "—";
+  }
+  if (stage === "production") return row.production_status || "—";
+  if (stage === "dispatch") {
+    if (row.dispatch_status === "Delivered") return "Delivered";
+    return row.dispatched_at ? "Not delivered" : "Not packed";
+  }
+  return row.dispatch_status === "Delivered" ? "Delivered" : row.dispatch_status || "—";
+}
+
+function statusBoardRecordColour(row, stage) {
+  return statusBoardColour(statusBoardDisplayStatus(row, stage));
+}
+
+function statusBoardDateRangeIncludes(row, stage) {
+  if (stage !== "delivered") return true;
+  const from = document.querySelector("#status-board-date-from").value;
+  const to = document.querySelector("#status-board-date-to").value;
+  if (!from && !to) return true;
+  const deliveredDate = statusBoardDate(row.delivered_at);
+  return Boolean(deliveredDate && (!from || deliveredDate >= from) && (!to || deliveredDate <= to));
+}
+
+function statusBoardBuildView() {
+  const search = document.querySelector("#status-board-search").value.trim().toLowerCase();
+  const salespersonId = document.querySelector("#status-board-salesperson").value;
+  const stages = Object.fromEntries(STATUS_BOARD_STAGES.map(([key]) => [key, []]));
+  const statusCounts = Object.fromEntries(STATUS_BOARD_STAGES.map(([key]) => [key, new Map()]));
+  const visibleRows = [];
+  for (const row of statusBoardRows) {
+    const name = statusBoardProfiles.get(row.salesperson_id || row.created_by) || "";
+    if (salespersonId && (row.salesperson_id || row.created_by) !== salespersonId) continue;
+    if (search) {
+      const values = [row.sr, row.ref_no, row.client_name, name, ...deliverySoNumbers(row)];
+      if (!values.some((value) => String(value || "").toLowerCase().includes(search))) continue;
+    }
+    const stage = statusBoardStageOf(row);
+    if (!statusBoardDateRangeIncludes(row, stage)) continue;
+    visibleRows.push(row);
+    stages[stage].push(row);
+    const label = statusBoardDisplayStatus(row, stage);
+    if (label !== "—") {
+      const counts = statusCounts[stage];
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+  }
+  return { stages, statusCounts, visibleRows };
+}
+
+function statusBoardRenderSalespeople() {
+  const select = document.querySelector("#status-board-salesperson");
+  const selected = select.value;
+  const people = [...new Set(statusBoardRows.map((row) => row.salesperson_id || row.created_by).filter(Boolean))]
+    .map((id) => [id, statusBoardProfiles.get(id) || "—"])
+    .filter(([, name]) => name !== "—")
+    .sort((a, b) => a[1].localeCompare(b[1]));
+  select.innerHTML = '<option value="">All salespeople</option>' + people.map(([id, name]) =>
+    `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`
+  ).join("");
+  if (people.some(([id]) => id === selected)) select.value = selected;
+}
+
+function statusBoardRenderSummary(stages) {
+  const openCount = STATUS_BOARD_STAGES.filter(([key]) => key !== "delivered")
+    .reduce((sum, [key]) => sum + stages[key].length, 0);
+  const summary = [
+    ["Open requests", openCount, "blue"],
+    ["Awaiting salesperson", stages.salesperson.length, "purple"],
+    ["In production", stages.production.length, "orange"],
+    ["In dispatch", stages.dispatch.length, "blue"],
+    ["Delivered in range", stages.delivered.length, "green"]
+  ];
+  document.querySelector("#status-board-summary").innerHTML = summary.map(([label, count, colour]) =>
+    `<article class="status-board-summary-card status-board-summary-${colour}"><span>${escapeHtml(label)}</span><strong>${count}</strong></article>`
+  ).join("");
+  const from = document.querySelector("#status-board-date-from").value || "any date";
+  const to = document.querySelector("#status-board-date-to").value || "any date";
+  document.querySelector("#status-board-date-count").textContent = `${stages.delivered.length} delivered between ${from} and ${to}`;
+}
+
+function statusBoardMeasureTop() {
+  const board = document.querySelector("#status-board-kanban");
+  if (!board) return;
+  const top = Math.max(0, board.getBoundingClientRect().top);
+  document.documentElement.style.setProperty("--board-top", `${top}px`);
+}
+
+function statusBoardRenderStageTabs(stages) {
+  const root = document.querySelector("#status-board-stage-tabs");
+  const allStageCount = STATUS_BOARD_STAGES.reduce((sum, [stage]) =>
+    sum + stages[stage].length, 0);
+  const tabs = [["all", "All stages", allStageCount], ...STATUS_BOARD_STAGES.map(([key, label]) =>
+    [key, label, stages[key].length]
+  )];
+  const children = [];
+  tabs.forEach(([key, label, count], index) => {
+    if (index) {
+      const separator = document.createElement("span");
+      separator.className = "status-board-stage-separator";
+      separator.setAttribute("aria-hidden", "true");
+      separator.textContent = "›";
+      children.push(separator);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "status-board-stage-tab";
+    button.dataset.stage = key;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", key === "all" ? "status-board-kanban" : "status-board-stage-table-panel");
+    button.setAttribute("aria-selected", String(statusBoardSelectedStage === key));
+    button.tabIndex = statusBoardSelectedStage === key ? 0 : -1;
+    const dot = document.createElement("span");
+    dot.className = "status-board-stage-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    name.className = "status-board-stage-label";
+    name.textContent = label;
+    const countPill = document.createElement("span");
+    countPill.className = "status-board-stage-count";
+    countPill.textContent = String(count);
+    button.append(dot, name, countPill);
+    button.addEventListener("click", () => {
+      statusBoardSelectedStage = key;
+      statusBoardDispatchFilter = "";
+      statusBoardRender();
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = [...root.querySelectorAll('[role="tab"]')];
+      const index = buttons.indexOf(button);
+      buttons[(index + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length].focus();
+    });
+    children.push(button);
+  });
+  root.replaceChildren(...children);
+}
+
+function statusBoardStatusCounts(counts) {
+  return [...counts].sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, count]) => `${count} ${label}`).join(" · ");
+}
+
+function statusBoardItems(row) {
+  const items = Array.isArray(row.items) ? row.items : [];
+  if (!items.length) return "—";
+  const first = `${String(items[0].item_name || "—")} × ${String(items[0].quantity || "—")} pcs`;
+  return `${first}${items.length > 1 ? ` +${items.length - 1} more` : ""}`;
+}
+
+function statusBoardFullItems(row) {
+  const items = Array.isArray(row.items) ? row.items : [];
+  if (!items.length) return "—";
+  return items.map((item) =>
+    `${String(item.item_name || "—")} × ${String(item.quantity || "—")} pcs`
+  ).join(" · ");
+}
+
+function statusBoardSort(rows, stage) {
+  return [...rows].sort((a, b) => {
+    const timeA = new Date((stage === "dispatch" ? a.ready_at : stage === "delivered" ? a.delivered_at : a.created_at) || a.created_at || 0).getTime() || 0;
+    const timeB = new Date((stage === "dispatch" ? b.ready_at : stage === "delivered" ? b.delivered_at : b.created_at) || b.created_at || 0).getTime() || 0;
+    return stage === "delivered" ? timeB - timeA : timeA - timeB;
+  });
+}
+
+function statusBoardCard(row, stage) {
+  const colour = statusBoardRecordColour(row, stage);
+  const status = statusBoardDisplayStatus(row, stage);
+  const soNumbers = deliverySoNumbers(row);
+  const salesperson = statusBoardProfiles.get(row.salesperson_id || row.created_by) || "—";
+  const href = stage === "production_store" ? "./production-store.html" : "./deliveries.html";
+  const items = statusBoardFullItems(row);
+  return `<a class="status-board-card status-board-card-${colour}" href="${href}?open=${escapeHtml(encodeURIComponent(row.id))}" aria-label="SR ${escapeHtml(row.sr)}, ${escapeHtml(row.ref_no)}, ${escapeHtml(status)}">
+    <div class="status-board-card-heading"><strong>${escapeHtml(soNumbers.join(", ") || "—")}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span></div>
+    ${row.client_name?.trim() ? `<div class="status-board-card-client">${escapeHtml(row.client_name)}</div>` : ""}
+    <div class="status-board-card-meta">${escapeHtml(salesperson)} · ${escapeHtml(row.ref_no || "—")}</div>
+    <div class="status-board-card-items" title="${escapeHtml(items)}">${escapeHtml(items)}</div>
+  </a>`;
+}
+
+function statusBoardRenderKanban(stages, statusCounts, selectedStage = "all") {
+  const root = document.querySelector("#status-board-kanban");
+  const visibleStages = selectedStage === "all"
+    ? STATUS_BOARD_STAGES
+    : STATUS_BOARD_STAGES.filter(([stage]) => stage === selectedStage);
+  root.innerHTML = visibleStages.map(([stage, label]) => {
+    const filteredRows = stage === "dispatch" && selectedStage === "dispatch" && statusBoardDispatchFilter
+      ? stages[stage].filter((row) => statusBoardDispatchStatus(row) === statusBoardDispatchFilter)
+      : stages[stage];
+    const stageRows = statusBoardSort(filteredRows, stage);
+    const counts = filteredRows === stages[stage] ? statusCounts[stage]
+      : new Map(stageRows.map((row) => statusBoardDisplayStatus(row, stage))
+        .reduce((map, status) => map.set(status, (map.get(status) || 0) + 1), new Map()));
+    return `<section class="status-board-column status-board-column-${stage}" data-stage="${stage}"><header><h2>${escapeHtml(label)} <span class="status-board-column-count">${stageRows.length}</span></h2><p>${escapeHtml(statusBoardStatusCounts(counts))}</p></header>
+      <div class="status-board-column-cards">${stageRows.length
+        ? stageRows.map((row) => statusBoardCard(row, stage)).join("")
+        : `<p class="status-board-nothing">${stage === "delivered" ? "No deliveries in this date range" : "Nothing here"}</p>`}</div></section>`;
+  }).join("");
+}
+
+function statusBoardDispatchStatus(row) {
+  return row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed";
+}
+
+function statusBoardRenderDispatchFilters(rows) {
+  const root = document.querySelector("#status-board-dispatch-filters");
+  const values = new Map();
+  rows.forEach((row) => {
+    const label = statusBoardDispatchStatus(row);
+    values.set(label, (values.get(label) || 0) + 1);
+  });
+  const options = [["", "All", rows.length], ...[...values].sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, count]) => [label, label, count])];
+  root.classList.toggle("hidden", statusBoardSelectedStage !== "dispatch");
+  if (statusBoardSelectedStage !== "dispatch") return;
+  root.replaceChildren(...options.map(([value, label, count]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "status-board-dispatch-chip";
+    button.textContent = `${label} ${count}`;
+    button.setAttribute("aria-pressed", String(statusBoardDispatchFilter === value));
+    button.addEventListener("click", () => {
+      statusBoardDispatchFilter = value;
+      statusBoardRender();
+    });
+    return button;
+  }));
+}
+
+function statusBoardRenderTable(stages, stage) {
+  const panel = document.querySelector("#status-board-stage-table-panel");
+  const kanban = document.querySelector("#status-board-kanban");
+  const isTable = stage !== "all";
+  panel.classList.toggle("hidden", !isTable);
+  kanban.classList.toggle("hidden", isTable);
+  if (!isTable) return;
+  let stageRows = statusBoardSort(stages[stage], stage);
+  if (stage === "dispatch") {
+    if (statusBoardDispatchFilter) stageRows = stageRows.filter((row) => statusBoardDispatchStatus(row) === statusBoardDispatchFilter);
+  }
+  document.querySelector("#status-board-table-head").innerHTML = "<tr><th>DL reference</th><th>SR</th><th>SO number</th><th>Salesperson</th><th>Client name</th><th>Items</th><th>Status</th></tr>";
+  const body = document.querySelector("#status-board-table-body");
+  body.innerHTML = stageRows.map((row) => {
+    const status = statusBoardDisplayStatus(row, stage);
+    const colour = statusBoardRecordColour(row, stage);
+    return `<tr tabindex="0" role="button" data-status-record="${escapeHtml(row.id)}">
+      <td>${escapeHtml(row.ref_no || "—")}</td><td>${escapeHtml(row.sr || "—")}</td><td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td>
+      <td>${escapeHtml(statusBoardProfiles.get(row.salesperson_id || row.created_by) || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td><td>${escapeHtml(statusBoardItems(row))}</td>
+      <td><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span></td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("[data-status-record]").forEach((row) => {
+    const open = () => statusBoardOpenTimeline(row.dataset.statusRecord);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+  const empty = document.querySelector("#status-board-table-empty");
+  empty.textContent = stage === "delivered" ? "No deliveries in this date range" : "Nothing here";
+  empty.classList.toggle("hidden", stageRows.length > 0);
+}
+
+function statusBoardFormatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Nairobi" }).format(date);
+}
+
+function statusBoardTimelineRows(row) {
+  const current = statusBoardStageOf(row);
+  const currentIndex = STATUS_BOARD_STAGES.findIndex(([key]) => key === current);
+  return STATUS_BOARD_STAGES.map(([stage, label], index) => {
+    const done = index < currentIndex || stage === "delivered" && current === "delivered";
+    const isCurrent = stage === current && !done;
+    const statusColour = statusBoardRecordColour(row, stage);
+    const colour = done ? "green" : isCurrent ? statusColour : "grey";
+    const whoId = stage === "production_store" ? row.created_by : stage === "salesperson" ? row.salesperson_id : null;
+    const time = stage === "production_store" ? row.created_at
+      : stage === "production" && row.production_status === "Ready" ? row.ready_at
+        : stage === "dispatch" ? row.dispatched_at || row.ready_at
+          : stage === "delivered" ? row.delivered_at : null;
+    const who = whoId ? statusBoardProfiles.get(whoId) || "—" : "—";
+    const status = statusBoardDisplayStatus(row, stage);
+    const marker = done ? "✓" : isCurrent ? "●" : "○";
+    return `<li class="status-board-timeline-step ${done ? "is-complete" : isCurrent ? `is-current status-board-timeline-${colour}` : "is-future"}">
+      <span class="status-board-timeline-marker" aria-hidden="true">${marker}</span><div><strong>${escapeHtml(label)}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span>
+      <small>Who: ${escapeHtml(who)} · When: ${escapeHtml(statusBoardFormatDateTime(time))}</small></div></li>`;
+  }).join("");
+}
+
+function statusBoardOpenTimeline(id) {
+  const row = statusBoardRows.find((record) => record.id === id);
+  if (!row) return;
+  document.querySelector("#status-board-dialog-title").textContent = `${row.ref_no || "Delivery"} · SR ${row.sr}`;
+  document.querySelector("#status-board-timeline").innerHTML = `<ol class="status-board-timeline">${statusBoardTimelineRows(row)}</ol>`;
+  document.querySelector("#status-board-dialog").showModal();
+}
+
+function statusBoardRender() {
+  const { stages, statusCounts, visibleRows } = statusBoardBuildView();
+  const phoneLayout = window.matchMedia("(max-width: 640px)").matches;
+  const total = STATUS_BOARD_STAGES.reduce((sum, [stage]) => sum + stages[stage].length, 0);
+  console.assert(total === visibleRows.length, "Status board stage counts must equal visible records.");
+  STATUS_BOARD_STAGES.forEach(([stage]) => {
+    const statusTotal = [...statusCounts[stage].values()].reduce((sum, count) => sum + count, 0);
+    console.assert(statusTotal === stages[stage].length, `Status board ${stage} status counts must match its records.`);
+  });
+  console.assert(new Set(visibleRows.map((row) => row.id)).size === visibleRows.length, "A delivery must not appear in multiple stages.");
+  statusBoardRenderSummary(stages);
+  statusBoardRenderStageTabs(stages);
+  statusBoardRenderDispatchFilters(stages.dispatch);
+  if (phoneLayout) {
+    statusBoardRenderKanban(stages, statusCounts, statusBoardSelectedStage);
+    statusBoardRenderTable(stages, "all");
+  } else {
+    if (statusBoardSelectedStage === "all") statusBoardRenderKanban(stages, statusCounts);
+    statusBoardRenderTable(stages, statusBoardSelectedStage);
+  }
+}
+
+function statusBoardReportDataIssues(rows) {
+  const issues = new Map([
+    ["goods_status", []],
+    ["client name", []],
+    ["contact name", []]
+  ]);
+  rows.forEach((row) => {
+    const stage = statusBoardStageOf(row);
+    if (!row.goods_status) issues.get("goods_status").push(row);
+    if (!row.client_name?.trim()) issues.get("client name").push(row);
+    if (!row.contact_name?.trim()) issues.get("contact name").push(row);
+    if (statusBoardDisplayStatus(row, stage) === "—" && row.goods_status) {
+      if (!issues.has("stage status")) issues.set("stage status", []);
+      issues.get("stage status").push(row);
+    }
+  });
+  issues.forEach((affected, field) => {
+    const unreported = affected.filter((row) => {
+      const key = `${field}:${row.id}`;
+      if (statusBoardReportedIssues.has(key)) return false;
+      statusBoardReportedIssues.add(key);
+      return true;
+    });
+    if (unreported.length) {
+      console.warn(`Status board records missing ${field}:`, unreported.map((row) =>
+        `SR ${row.sr || "—"} · ${row.ref_no || row.id}`));
+    }
+  });
+}
+
+function statusBoardCaptureScroll() {
+  return {
+    page: window.scrollY,
+    columns: [...document.querySelectorAll(".status-board-column-cards")].map((column) => column.scrollTop),
+    tableTop: document.querySelector("#status-board-stage-table-panel .table-wrap")?.scrollTop || 0,
+    tableLeft: document.querySelector("#status-board-stage-table-panel .table-wrap")?.scrollLeft || 0
+  };
+}
+
+function statusBoardRestoreScroll(scroll) {
+  window.scrollTo(window.scrollX, scroll.page);
+  document.querySelectorAll(".status-board-column-cards").forEach((column, index) => {
+    column.scrollTop = scroll.columns[index] || 0;
+  });
+  const table = document.querySelector("#status-board-stage-table-panel .table-wrap");
+  if (table) {
+    table.scrollTop = scroll.tableTop;
+    table.scrollLeft = scroll.tableLeft;
+  }
+}
+
+async function statusBoardRefresh() {
+  if (statusBoardLoading) return;
+  statusBoardLoading = true;
+  const scroll = statusBoardCaptureScroll();
+  try {
+    const [deliveryResult, profilesResult] = await Promise.all([
+      client.from("deliveries")
+        .select("id,sr,ref_no,created_at,created_by,salesperson_id,handoff_status,goods_status,client_name,contact_name,items,production_status,dispatch_status,ready_at,dispatched_at,delivered_at")
+        .order("created_at", { ascending: false }).limit(1000),
+      client.from("profiles").select("id,full_name").limit(1000)
+    ]);
+    if (deliveryResult.error) throw deliveryResult.error;
+    if (profilesResult.error) throw profilesResult.error;
+    statusBoardRows = deliveryResult.data || [];
+    statusBoardProfiles = new Map((profilesResult.data || []).map((person) => [person.id, person.full_name]));
+    statusBoardReportDataIssues(statusBoardRows);
+    statusBoardRenderSalespeople();
+    statusBoardRender();
+    statusBoardRestoreScroll(scroll);
+    statusBoardMeasureTop();
+    const updated = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Africa/Nairobi", hour: "2-digit", minute: "2-digit", hour12: false
+    }).format(new Date());
+    document.querySelector("#status-board-updated").textContent = `Updated ${updated}`;
+  } catch (error) {
+    toast(error.message || "Could not load the status board.", "error");
+  } finally {
+    statusBoardLoading = false;
+  }
+}
+
+function statusBoardSelectTab(tabName, focus = false) {
+  const tabs = [...document.querySelectorAll(".status-board-tabs [role='tab']")];
+  tabs.forEach((tab) => {
+    const selected = tab.id === `status-tab-${tabName}`;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    const panel = document.querySelector(`#${tab.getAttribute("aria-controls")}`);
+    panel.hidden = !selected;
+    panel.classList.toggle("hidden", !selected);
+  });
+  if (focus) document.querySelector(`#status-tab-${tabName}`).focus();
+}
+
+async function initStatusBoard() {
+  if (!canSeeStatusBoard(profile)) {
+    location.replace(`./${homePageForRole()}`);
+    return;
+  }
+  const todayDate = statusBoardDate(new Date());
+  document.querySelector("#status-board-date-from").value = todayDate;
+  document.querySelector("#status-board-date-to").value = todayDate;
+  document.querySelector("#status-board-search").addEventListener("input", debounce(statusBoardRender, 250));
+  document.querySelector("#status-board-salesperson").addEventListener("change", statusBoardRender);
+  document.querySelector("#status-board-date-from").addEventListener("change", statusBoardRender);
+  document.querySelector("#status-board-date-to").addEventListener("change", statusBoardRender);
+  window.addEventListener("resize", debounce(() => {
+    statusBoardRender();
+    statusBoardMeasureTop();
+  }, 100));
+  document.querySelector("#status-board-refresh").addEventListener("click", () => {
+    void statusBoardRefresh();
+  });
+  document.querySelector("#status-board-display-mode").addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const enabled = document.body.classList.toggle("status-board-display-mode");
+    button.setAttribute("aria-pressed", String(enabled));
+    requestAnimationFrame(statusBoardMeasureTop);
+  });
+  document.querySelector("#status-board-reset").addEventListener("click", () => {
+    document.querySelector("#status-board-search").value = "";
+    document.querySelector("#status-board-salesperson").value = "";
+    document.querySelector("#status-board-date-from").value = todayDate;
+    document.querySelector("#status-board-date-to").value = todayDate;
+    statusBoardSelectedStage = "all";
+    statusBoardDispatchFilter = "";
+    statusBoardSelectTab("deliveries");
+    statusBoardRender();
+  });
+  document.querySelectorAll("[data-date-range]").forEach((button) => button.addEventListener("click", () => {
+    const todayValue = statusBoardDate(new Date());
+    const todayStart = new Date(`${todayValue}T00:00:00+03:00`);
+    const from = new Date(todayStart);
+    if (button.dataset.dateRange === "week") from.setDate(from.getDate() - 6);
+    if (button.dataset.dateRange === "month") from.setDate(1);
+    document.querySelector("#status-board-date-from").value = statusBoardDate(from);
+    document.querySelector("#status-board-date-to").value = todayValue;
+    statusBoardRender();
+  }));
+  document.querySelectorAll(".status-board-tabs [role='tab']").forEach((tab) => {
+    tab.addEventListener("click", () => statusBoardSelectTab(tab.id.replace("status-tab-", "")));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = [...document.querySelectorAll(".status-board-tabs [role='tab']")];
+      const index = tabs.indexOf(tab);
+      const next = tabs[(index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      statusBoardSelectTab(next.id.replace("status-tab-", ""), true);
+    });
+  });
+  document.querySelectorAll("[data-status-dialog-close]").forEach((button) =>
+    button.addEventListener("click", () => document.querySelector("#status-board-dialog").close())
+  );
+  document.querySelector("#status-board-dialog").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
+  await statusBoardRefresh();
+  statusBoardRefreshTimer = window.setInterval(() => {
+    if (!document.hidden) void statusBoardRefresh();
+  }, STATUS_BOARD_REFRESH_MS);
+  window.addEventListener("pagehide", () => {
+    if (statusBoardRefreshTimer !== null) window.clearInterval(statusBoardRefreshTimer);
+  }, { once: true });
 }
 
 function updateDeliverySlotOptions() {
@@ -2689,8 +3292,8 @@ function deliveryStatusFilter(query) {
     const dateFrom = document.querySelector("#delivery-date-from").value;
     const dateTo = document.querySelector("#delivery-date-to").value;
     const salesperson = document.querySelector("#delivery-salesperson").value;
-    const production = document.querySelector("#delivery-production-filter").value;
-    const dispatch = document.querySelector("#delivery-dispatch-filter").value;
+    const production = isDeliveryRoleChipMode() ? "" : document.querySelector("#delivery-production-filter").value;
+    const dispatch = isDeliveryRoleChipMode() ? "" : document.querySelector("#delivery-dispatch-filter").value;
     const search = document.querySelector("#delivery-search").value.trim();
     const orFilters = [];
     if (production) query = query.eq("production_status", production);
@@ -2817,12 +3420,20 @@ async function loadProductionStoreSalespeople() {
 async function initializeDeliveryFilters() {
   restoreDeliveryFilters();
   await loadDeliveryFilterSalespeople();
+  const roleChipMode = isDeliveryRoleChipMode();
+  document.querySelector("#delivery-role-status-chips").classList.toggle("hidden", !roleChipMode);
+  if (roleChipMode) {
+    document.querySelector("#delivery-production-filter").closest("label").classList.add("hidden");
+    document.querySelector("#delivery-dispatch-filter").closest("label").classList.add("hidden");
+    document.querySelector("#delivery-production-filter").value = "";
+    document.querySelector("#delivery-dispatch-filter").value = "";
+    deliveryRoleStatusFilter = "pending";
+  }
   const filterSelectors = [
     "#delivery-date-from",
     "#delivery-date-to",
     "#delivery-salesperson",
-    "#delivery-production-filter",
-    "#delivery-dispatch-filter"
+    ...roleChipMode ? [] : ["#delivery-production-filter", "#delivery-dispatch-filter"]
   ];
   filterSelectors.forEach((selector) => {
     document.querySelector(selector).addEventListener("change", () => {
@@ -2836,6 +3447,10 @@ async function initializeDeliveryFilters() {
     document.querySelector("#delivery-salesperson").value = "";
     document.querySelector("#delivery-production-filter").value = "";
     document.querySelector("#delivery-dispatch-filter").value = "";
+    if (roleChipMode) {
+      deliveryRoleStatusFilter = "pending";
+      document.querySelector("#delivery-search").value = "";
+    }
     saveDeliveryFilters();
     void loadDeliveries(true);
   });
@@ -2843,8 +3458,13 @@ async function initializeDeliveryFilters() {
     document.querySelector("#delivery-date-from").value = "";
     document.querySelector("#delivery-date-to").value = "";
     document.querySelector("#delivery-salesperson").value = "";
-    document.querySelector("#delivery-production-filter").value = "Not ready";
-    document.querySelector("#delivery-dispatch-filter").value = "Not delivered";
+    if (roleChipMode) {
+      deliveryRoleStatusFilter = "pending";
+      document.querySelector("#delivery-search").value = "";
+    } else {
+      document.querySelector("#delivery-production-filter").value = "Not ready";
+      document.querySelector("#delivery-dispatch-filter").value = "Not delivered";
+    }
     saveDeliveryFilters();
     void loadDeliveries(true);
   });
@@ -2962,25 +3582,76 @@ function renderProductionGoodsChips(rows) {
     ["not_ready", "Not ready", "not-ready"],
     ["all", "All", "all"]
   ];
-  root.replaceChildren(...chips.map(([value, label, style]) => {
+  renderStatusChipButtons(root, chips.map(([value, label, style]) => ({ value, label, style })), new Map(Object.entries(counts)),
+    productionGoodsFilter, (value) => {
+      productionGoodsFilter = value;
+      renderDeliveryRows();
+    }, "goodsFilter");
+}
+
+function renderStatusChipButtons(root, chips, counts, selected, onSelect, dataName = "statusFilter") {
+  root.replaceChildren(...chips.map(({ value, label, style }) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `production-goods-chip production-goods-chip-${style}${productionGoodsFilter === value ? " is-active" : ""}`;
-    button.dataset.goodsFilter = value;
-    button.setAttribute("aria-pressed", String(productionGoodsFilter === value));
-    button.setAttribute("aria-label", `${label} ${counts[value]}`);
+    button.className = `production-goods-chip production-goods-chip-${style}${selected === value ? " is-active" : ""}`;
+    button.dataset[dataName] = value;
+    button.setAttribute("aria-pressed", String(selected === value));
+    button.setAttribute("aria-label", `${label} ${counts.get(value) ?? 0}`);
     const name = document.createElement("span");
     name.textContent = label;
     const count = document.createElement("span");
     count.className = "production-goods-chip-count";
-    count.textContent = String(counts[value]);
+    count.textContent = String(counts.get(value) ?? 0);
     button.append(name, count);
     button.addEventListener("click", () => {
-      productionGoodsFilter = value;
-      renderDeliveryRows();
+      onSelect(value);
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = [...root.querySelectorAll("button")];
+      const index = buttons.indexOf(button);
+      const nextIndex = event.key === "Home" ? 0
+        : event.key === "End" ? buttons.length - 1
+          : (index + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length;
+      buttons[nextIndex]?.focus();
     });
     return button;
   }));
+}
+
+function isDeliveryRoleChipMode() {
+  return page === "deliveries.html" && ["production", "dispatch"].includes(profile.role);
+}
+
+function deliveryRoleStatusMatches(row, value) {
+  if (value === "all") return true;
+  if (profile.role === "production") {
+    if (value === "pending") return row.goods_status === "ready" && row.production_status !== "Ready";
+    return row.production_status === value;
+  }
+  if (value === "pending" || value === "not-packed") {
+    const notPacked = row.production_status === "Ready" && row.dispatch_status === "Not delivered" && !row.dispatched_at;
+    return value === "pending" ? notPacked : row.dispatch_status === "Not delivered" && !row.dispatched_at;
+  }
+  if (value === "ready-for-delivery" || value === "packed") {
+    return row.dispatch_status === "Not delivered" && Boolean(row.dispatched_at);
+  }
+  if (value === "Not delivered") return row.dispatch_status === "Not delivered" && Boolean(row.dispatched_at);
+  return row.dispatch_status === value;
+}
+
+function deliveryRoleStatusPills(rows) {
+  const chips = DELIVERY_ROLE_STATUS_LABELS[profile.role];
+  const counts = new Map(chips.map(({ value }) => [
+    value,
+    value === "all" ? rows.length : rows.filter((row) => deliveryRoleStatusMatches(row, value)).length
+  ]));
+  renderStatusChipButtons(document.querySelector("#delivery-role-status-chips"), chips, counts,
+    deliveryRoleStatusFilter, (value) => {
+      deliveryRoleStatusFilter = value;
+      renderDeliveryRows();
+    });
 }
 
 function renderDeliveryRows() {
@@ -3008,7 +3679,10 @@ function renderDeliveryRows() {
     return searchable.some((value) => String(value || "").toLowerCase().includes(query));
   });
   if (page === "production-store.html") renderProductionGoodsChips(matchingRows);
-  const visibleRows = page === "production-store.html"
+  if (isDeliveryRoleChipMode()) deliveryRoleStatusPills(matchingRows);
+  const visibleRows = isDeliveryRoleChipMode()
+    ? matchingRows.filter((row) => deliveryRoleStatusMatches(row, deliveryRoleStatusFilter))
+    : page === "production-store.html"
     ? matchingRows.filter((row) => {
       const status = deliveryGoodsStatus(row);
       if (productionGoodsFilter === "pending") return !status || status === "partial" || status === "not_ready";
@@ -3047,7 +3721,31 @@ function renderDeliveryRows() {
     if (vehicle && [...vehicle.options].some((option) => option.value === values.vehicle)) vehicle.value = values.vehicle;
   });
   const emptyState = document.querySelector("#delivery-empty");
-  if (page === "production-store.html" && !filtered.length) {
+  if (isDeliveryRoleChipMode() && !filtered.length) {
+    emptyState.replaceChildren();
+    const options = DELIVERY_ROLE_STATUS_LABELS[profile.role];
+    if (!matchingRows.length) {
+      emptyState.textContent = "No matching deliveries";
+    } else {
+      const current = options.find(({ value }) => value === deliveryRoleStatusFilter);
+      emptyState.append(document.createTextNode(`No ${current?.label || "matching"} deliveries.`));
+      const alternative = options.find(({ value }) => value !== deliveryRoleStatusFilter && value !== "all"
+        && matchingRows.some((row) => deliveryRoleStatusMatches(row, value)));
+      if (alternative) {
+        const count = matchingRows.filter((row) => deliveryRoleStatusMatches(row, alternative.value)).length;
+        emptyState.append(document.createElement("br"), document.createTextNode(`${count} in ${alternative.label}, `));
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quiet production-ready-link";
+        button.textContent = "view them";
+        button.addEventListener("click", () => {
+          deliveryRoleStatusFilter = alternative.value;
+          renderDeliveryRows();
+        });
+        emptyState.append(button);
+      }
+    }
+  } else if (page === "production-store.html" && !filtered.length) {
     emptyState.replaceChildren();
     if (!matchingRows.length) {
       emptyState.textContent = "No matching deliveries";
@@ -3074,7 +3772,7 @@ function renderDeliveryRows() {
         emptyState.append(viewReady);
       }
     }
-  } else if (page === "production-store.html") {
+  } else if (page === "production-store.html" || isDeliveryRoleChipMode()) {
     emptyState.replaceChildren();
   } else {
     emptyState.textContent = page === "deliveries.html"
@@ -3186,6 +3884,61 @@ async function deleteDelivery(button) {
   toast(`Delivery ${row.ref_no} deleted.`);
   await loadDeliveries(true);
   document.querySelector("#delivery-period").dispatchEvent(new Event("change"));
+}
+
+async function openDeliveryFromDeepLink(id) {
+  const cleanUrl = () => {
+    const url = new URL(location.href);
+    url.searchParams.delete("open");
+    history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+  try {
+    document.querySelector("#delivery-search").value = "";
+    if (page === "production-store.html") {
+      document.querySelector("#production-salesperson-filter").value = "";
+      productionGoodsFilter = "all";
+      await loadDeliveries(true);
+    } else {
+      document.querySelector("#delivery-date-from").value = "";
+      document.querySelector("#delivery-date-to").value = "";
+      document.querySelector("#delivery-salesperson").value = "";
+      document.querySelector("#delivery-production-filter").value = "";
+      document.querySelector("#delivery-dispatch-filter").value = "";
+      const statusFilter = document.querySelector("#delivery-status-filter");
+      if (statusFilter) statusFilter.value = "";
+      if (isDeliveryRoleChipMode()) deliveryRoleStatusFilter = "all";
+      saveDeliveryFilters();
+      await loadDeliveries(true);
+    }
+
+    let row = deliveryRows.find((delivery) => delivery.id === id);
+    if (!row) {
+      const { data, error } = await client.from(deliveryReadTable())
+        .select(deliverySelect).eq("id", id).maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        toast("That request is not available here", "error");
+        return;
+      }
+      row = data;
+      deliveryRows.push(row);
+      if (page === "production-store.html") await loadProductionStoreSalespeople();
+    }
+
+    renderDeliveryRows();
+    const tableRow = document.querySelector(`#delivery-rows [data-entry-id="${CSS.escape(id)}"]`);
+    const trigger = tableRow?.querySelector(`[data-delivery-view="${CSS.escape(id)}"]`);
+    if (!tableRow || !trigger) {
+      toast("That request is not available here", "error");
+      return;
+    }
+    tableRow.classList.add("portal-opened-entry");
+    tableRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => tableRow.classList.remove("portal-opened-entry"), 2000);
+    await openDeliveryView(row, trigger);
+  } finally {
+    cleanUrl();
+  }
 }
 
 function openDeliveryItemsView(row, trigger) {
@@ -3475,15 +4228,6 @@ async function initDeliveries() {
       renderDeliveryRows();
     }
   });
-  const openId = new URLSearchParams(location.search).get("open");
-  if (openId && !deliveryRows.some((row) => row.id === openId)) {
-    const { data, error } = await client.from(deliveryReadTable()).select(deliverySelect).eq("id", openId).maybeSingle();
-    if (error) throw error;
-    if (data) {
-      deliveryRows.push(data);
-      renderDeliveryRows();
-    }
-  }
 }
 
 async function loadVehicles() {
@@ -3691,8 +4435,8 @@ function routeRiderFilterValues() {
   return {
     period: document.querySelector("#route-request-period").value,
     salesperson: document.querySelector("#route-salesperson-filter-select").value,
-    rider: document.querySelector("#route-rider-filter-select").value,
-    status: document.querySelector("#route-status-filter").value
+    rider: routeRiderChipFilter,
+    status: routeStatusChipFilter
   };
 }
 
@@ -3720,11 +4464,9 @@ function restoreRouteRiderFilters() {
   if (typeof saved.salesperson === "string") {
     document.querySelector("#route-salesperson-filter-select").dataset.savedValue = saved.salesperson;
   }
-  if (typeof saved.rider === "string") {
-    document.querySelector("#route-rider-filter-select").dataset.savedValue = saved.rider;
-  }
-  if (["active", "", "Not started", "Started", "In progress", "Finished", "Declined"].includes(saved.status)) {
-    document.querySelector("#route-status-filter").value = saved.status;
+  if (typeof saved.rider === "string") routeRiderChipFilter = saved.rider;
+  if (ROUTE_STATUS_CHIPS.some(({ value }) => value === saved.status)) {
+    routeStatusChipFilter = saved.status;
   }
 }
 
@@ -3757,20 +4499,12 @@ async function loadRouteSalespersonOptions() {
 
 async function initializeRouteRiderFilters() {
   restoreRouteRiderFilters();
+  routeRiderChipFilter = "__unassigned";
+  routeStatusChipFilter = "active";
   await loadRouteSalespersonOptions();
-  const riderSelect = document.querySelector("#route-rider-filter-select");
-  riderSelect.innerHTML = '<option value="">All riders</option><option value="__unassigned">Not assigned</option>' + riderUsers.map((rider) =>
-    `<option value="${escapeHtml(rider.id)}">${escapeHtml(rider.full_name)}</option>`
-  ).join("");
-  const savedRider = riderSelect.dataset.savedValue;
-  if (savedRider && (savedRider === "__unassigned" || riderUsers.some((rider) => rider.id === savedRider))) {
-    riderSelect.value = savedRider;
-  }
   [
     "#route-request-period",
-    "#route-salesperson-filter-select",
-    "#route-rider-filter-select",
-    "#route-status-filter"
+    "#route-salesperson-filter-select"
   ].forEach((selector) => {
     document.querySelector(selector).addEventListener("change", () => {
       saveRouteRiderFilters();
@@ -3780,16 +4514,17 @@ async function initializeRouteRiderFilters() {
   document.querySelector("#route-clear-filters").addEventListener("click", () => {
     document.querySelector("#route-request-period").value = "all";
     document.querySelector("#route-salesperson-filter-select").value = "";
-    document.querySelector("#route-rider-filter-select").value = "";
-    document.querySelector("#route-status-filter").value = "";
+    routeRiderChipFilter = "";
+    routeStatusChipFilter = "";
     saveRouteRiderFilters();
     void loadRiderJobs(true);
   });
   document.querySelector("#route-reset-filters").addEventListener("click", () => {
+    document.querySelector("#route-search").value = "";
     document.querySelector("#route-request-period").value = "today";
     document.querySelector("#route-salesperson-filter-select").value = "";
-    document.querySelector("#route-rider-filter-select").value = "__unassigned";
-    document.querySelector("#route-status-filter").value = "active";
+    routeRiderChipFilter = "__unassigned";
+    routeStatusChipFilter = "active";
     saveRouteRiderFilters();
     void loadRiderJobs(true);
   });
@@ -3809,12 +4544,6 @@ async function loadRiderJobs(reset = true) {
     const dateRange = routeRiderDateRange(routeFilters.period);
     if (dateRange) base = base.gte("scheduled_date", dateRange.from).lte("scheduled_date", dateRange.to);
     if (routeFilters.salesperson) base = base.eq("created_by", routeFilters.salesperson);
-    if (routeFilters.rider === "__unassigned") base = base.is("assigned_rider", null);
-    else if (routeFilters.rider) base = base.eq("assigned_rider", routeFilters.rider);
-    if (routeFilters.status === "active") {
-      base = base.neq("status", "Finished").neq("status", "Declined");
-    }
-    else if (routeFilters.status) base = base.eq("status", routeFilters.status);
   }
   if (profile.role === "rider" && !routeAdmin) base = base.eq("assigned_rider", profile.id);
   else if (!routeAdmin) base = base.eq("created_by", profile.id);
@@ -3888,6 +4617,45 @@ async function updateRiderWarning(rowId) {
   warning.textContent = count ? "Warning: this rider already has a job in this time slot." : "";
 }
 
+function renderRouteRiderChips(rows) {
+  const chips = [
+    { value: "__unassigned", label: "Pending", style: "pending" },
+    ...riderUsers.map((rider) => ({ value: rider.id, label: rider.full_name, style: "ready" })),
+    { value: "", label: "All", style: "all" }
+  ];
+  const counts = new Map(chips.map(({ value }) => [
+    value,
+    value === "" ? rows.length
+      : value === "__unassigned" ? rows.filter((row) => !row.assigned_rider).length
+        : rows.filter((row) => row.assigned_rider === value).length
+  ]));
+  renderStatusChipButtons(document.querySelector("#route-rider-chips"), chips, counts,
+    routeRiderChipFilter, (value) => {
+      routeRiderChipFilter = value;
+      saveRouteRiderFilters();
+      renderRiderJobs();
+    }, "riderFilter");
+}
+
+function routeStatusFilterMatches(row, value) {
+  if (!value) return true;
+  if (value === "active") return !["Finished", "Declined"].includes(row.status);
+  return row.status === value;
+}
+
+function renderRouteStatusChips(rows) {
+  const counts = new Map(ROUTE_STATUS_CHIPS.map(({ value }) => [
+    value,
+    value ? rows.filter((row) => routeStatusFilterMatches(row, value)).length : rows.length
+  ]));
+  renderStatusChipButtons(document.querySelector("#route-status-chips"), ROUTE_STATUS_CHIPS, counts,
+    routeStatusChipFilter, (value) => {
+      routeStatusChipFilter = value;
+      saveRouteRiderFilters();
+      renderRiderJobs();
+    }, "statusChip");
+}
+
 function renderRiderJobs() {
   const routeView = hasRouteAdminAccess(profile) && page === "route-admin.html";
   const showSalesView = hasRiderRequestAccess(profile) && page === "riders.html";
@@ -3900,10 +4668,24 @@ function renderRiderJobs() {
       }];
     }));
   const search = document.querySelector("#route-search")?.value.trim().toLowerCase() || "";
-  const status = routeView ? document.querySelector("#route-status-filter")?.value || ""
-    : document.querySelector("#sales-rider-filter")?.value || "";
-  const matchingRows = riderJobRows.filter((row) => (!search || `${row.ref_no} ${row.client_name}${routeView ? "" : ` ${row.address}`}`.toLowerCase().includes(search))
-    && (routeView || !status || row.status === status));
+  const status = routeView ? "" : document.querySelector("#sales-rider-filter")?.value || "";
+  const searchedRows = riderJobRows.filter((row) => !search
+    || `${row.ref_no} ${row.client_name}${routeView ? "" : ` ${row.address}`}`.toLowerCase().includes(search));
+  const statusRows = routeView
+    ? searchedRows.filter((row) => routeStatusFilterMatches(row, routeStatusChipFilter))
+    : searchedRows.filter((row) => !status || row.status === status);
+  const riderRows = routeView
+    ? searchedRows.filter((row) => routeRiderChipFilter === ""
+      || (routeRiderChipFilter === "__unassigned" ? !row.assigned_rider : row.assigned_rider === routeRiderChipFilter))
+    : statusRows;
+  const matchingRows = routeView
+    ? statusRows.filter((row) => routeRiderChipFilter === ""
+      || (routeRiderChipFilter === "__unassigned" ? !row.assigned_rider : row.assigned_rider === routeRiderChipFilter))
+    : riderRows;
+  if (routeView) {
+    renderRouteRiderChips(statusRows);
+    renderRouteStatusChips(riderRows);
+  }
   const markup = (rows, canAssign) => rows.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}"><td><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>
     ${canAssign ? `<td>${escapeHtml(requesterNames.get(row.created_by) || "Salesperson")}</td>` : ""}
     <td>${escapeHtml(row.client_name)}<br><small>${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</small></td>
@@ -3923,11 +4705,59 @@ function renderRiderJobs() {
       if (rider) rider.value = values.rider;
       if (slot) slot.value = values.slot;
     });
-    document.querySelector("#route-rider-empty")?.classList.toggle("hidden", matchingRows.length > 0);
+    const empty = document.querySelector("#route-rider-empty");
+    if (!matchingRows.length) {
+      empty.replaceChildren();
+      if (!statusRows.length) {
+        empty.textContent = "No matching requests.";
+      } else {
+        const selectedChip = routeRiderChipFilter === "__unassigned"
+          ? { label: "Pending" }
+          : riderUsers.find((rider) => rider.id === routeRiderChipFilter) || { label: "All" };
+        empty.append(document.createTextNode(`No ${selectedChip.label} requests.`));
+      }
+      const statusAlternative = ROUTE_STATUS_CHIPS.find(({ value }) =>
+        value !== routeStatusChipFilter && riderRows.some((row) => routeStatusFilterMatches(row, value)));
+      const riderAlternative = [
+        { value: "__unassigned", label: "Pending" },
+        ...riderUsers.map((rider) => ({ value: rider.id, label: rider.full_name })),
+        { value: "", label: "All" }
+      ].find(({ value }) => value !== routeRiderChipFilter && statusRows.some((row) =>
+        value === "" || (value === "__unassigned" ? !row.assigned_rider : row.assigned_rider === value)));
+      if (statusAlternative) {
+        const count = riderRows.filter((row) => routeStatusFilterMatches(row, statusAlternative.value)).length;
+        empty.append(document.createElement("br"), document.createTextNode(`${count} in ${statusAlternative.label}, `));
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quiet production-ready-link";
+        button.textContent = "view them";
+        button.addEventListener("click", () => {
+          routeStatusChipFilter = statusAlternative.value;
+          saveRouteRiderFilters();
+          renderRiderJobs();
+        });
+        empty.append(button);
+      } else if (riderAlternative) {
+        const count = statusRows.filter((row) => riderAlternative.value === ""
+          || (riderAlternative.value === "__unassigned" ? !row.assigned_rider : row.assigned_rider === riderAlternative.value)).length;
+        empty.append(document.createElement("br"), document.createTextNode(`${count} in ${riderAlternative.label}, `));
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quiet production-ready-link";
+        button.textContent = "view them";
+        button.addEventListener("click", () => {
+          routeRiderChipFilter = riderAlternative.value;
+          saveRouteRiderFilters();
+          renderRiderJobs();
+        });
+        empty.append(button);
+      }
+    }
+    empty.classList.toggle("hidden", matchingRows.length > 0);
     const requestCount = routeRiderTotalCount === 1 ? "request" : "requests";
-    document.querySelector("#route-results-count").textContent = riderJobRows.length < routeRiderTotalCount
-      ? `Showing ${riderJobRows.length} of ${routeRiderTotalCount} ${requestCount}`
-      : `Showing ${riderJobRows.length} ${requestCount}`;
+    document.querySelector("#route-results-count").textContent = matchingRows.length < routeRiderTotalCount
+      ? `Showing ${matchingRows.length} of ${routeRiderTotalCount} ${requestCount}`
+      : `Showing ${matchingRows.length} ${requestCount}`;
     const filters = routeRiderFilterValues();
     const active = [];
     if (filters.period !== "all") {
@@ -3937,11 +4767,12 @@ function renderRiderJobs() {
       active.push(`Salesperson: ${document.querySelector("#route-salesperson-filter-select").selectedOptions[0].textContent}`);
     }
     if (filters.rider) {
-      active.push(`Rider: ${document.querySelector("#route-rider-filter-select").selectedOptions[0].textContent}`);
+      active.push(`Rider: ${filters.rider === "__unassigned"
+        ? "Pending"
+        : riderUsers.find((rider) => rider.id === filters.rider)?.full_name || "All riders"}`);
     }
-    if (filters.status) {
-      active.push(`Status: ${document.querySelector("#route-status-filter").selectedOptions[0].textContent}`);
-    }
+    const selectedStatus = ROUTE_STATUS_CHIPS.find(({ value }) => value === filters.status);
+    if (selectedStatus && selectedStatus.value !== "") active.push(`Status: ${selectedStatus.label}`);
     if (search) active.push(`Search: ${search}`);
     document.querySelector("#route-active-filters").textContent = active.length
       ? `Active filters: ${active.join(" · ")}`
@@ -3976,7 +4807,7 @@ function renderRiderJobs() {
       await updateRiderJob(id, {
         assigned_rider: riderId, rider_time: slot, rider_time_end: end, status: "Started",
         ...(profile.role === "admin" ? { assigned_at: new Date().toISOString() } : {})
-      }, button, routeView && document.querySelector("#route-rider-filter-select").value === "__unassigned"
+      }, button, routeView && routeRiderChipFilter === "__unassigned"
         ? "Rider assigned; removed from the unassigned list."
         : "Rider assigned.");
     }));

@@ -12,10 +12,10 @@
       <div id="route-filter-bar" class="route-filter-bar">
         <label>Period<select id="route-request-period"><option value="today" selected>Today</option><option value="week">This week</option><option value="month">This month</option><option value="all">All dates</option></select></label>
         <label id="route-salesperson-filter">Salesperson<select id="route-salesperson-filter-select"><option value="">All salespeople</option></select></label>
-        <label id="route-rider-filter">Rider<select id="route-rider-filter-select"><option value="">All riders</option><option value="__unassigned" selected>Not assigned</option></select></label>
-        <label>Status<select id="route-status-filter"><option value="active" selected>Active (hide finished)</option><option value="">All statuses</option><option value="Not started">Not started</option><option value="Started">Started</option><option value="In progress">In progress</option><option value="Finished">Finished</option><option value="Declined">Declined</option></select></label>
         <div class="route-filter-actions"><button type="button" class="secondary" id="route-clear-filters">Clear filters</button><button type="button" class="quiet" id="route-reset-filters">Reset to default</button></div>
       </div>
+      <div id="route-rider-filter" class="route-chip-filter"><span>Rider</span><div id="route-rider-chips" class="production-goods-chips route-filter-chips" role="group" aria-label="Filter by rider"></div></div>
+      <div class="route-chip-filter"><span>Status</span><div id="route-status-chips" class="production-goods-chips route-filter-chips" role="group" aria-label="Filter by status"></div></div>
       <p class="route-filter-summary"><span id="route-results-count">Showing 0 requests</span><span id="route-active-filters"></span></p>
       <div class="table-wrap"><table><thead><tr><th>SR / Ref</th><th>Salesperson</th><th>Client / contact</th><th>Address / details</th><th>Type</th><th>Expected</th><th>Requested</th><th>Rider</th><th>Rider time</th><th>Status</th><th>Action</th></tr></thead><tbody id="route-rider-rows"></tbody></table></div>
       <p id="route-rider-empty" class="empty-state hidden">No rider requests match these filters.</p>
