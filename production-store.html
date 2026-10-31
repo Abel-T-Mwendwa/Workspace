@@ -26,7 +26,7 @@
         <div class="production-store-filter-row"><input id="delivery-search" placeholder="Search salesperson, SO number or client"><select id="production-salesperson-filter" aria-label="Filter by salesperson"><option value="">All salespeople</option></select><button type="button" class="secondary" id="production-filter-reset">Reset</button></div>
         <div id="production-goods-chips" class="production-goods-chips" role="group" aria-label="Filter by goods status"></div>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>SR</th><th>Deliveries</th><th>SO number</th><th>Salesperson</th><th>Client name</th><th>Items</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>SO number</th><th>Client name</th><th>Item</th><th data-sort="delivery_schedule" data-sort-label="Deliveries date" tabindex="0">Deliveries date</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
       <p id="delivery-empty" class="empty-state hidden">No matching deliveries</p>
     </section>
   </main>

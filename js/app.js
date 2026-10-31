@@ -26,7 +26,6 @@ const STATUS_COLOURS = {
   "Not ready": "red",
   "Partially ready": "orange",
   Ready: "green",
-  "Awaiting salesperson": "purple",
   "In production": "blue",
   "In progress": "blue",
   Packed: "blue",
@@ -856,7 +855,7 @@ function updateSortIndicators() {
   document.querySelectorAll("th[data-sort]").forEach((header) => {
     const label = header.dataset.sortLabel || header.textContent.trim();
     header.dataset.sortLabel = label;
-    header.title = page === "deliveries.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "Click to sort" : "Double-click to sort";
+    header.title = page === "deliveries.html" || page === "production-store.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "Click to sort" : "Double-click to sort";
     header.classList.add("sortable-header");
     const active = header.dataset.sort === activeSort.key;
     header.textContent = `${label}${active ? (activeSort.direction === "asc" ? " ▲" : " ▼") : ""}`;
@@ -866,7 +865,7 @@ function updateSortIndicators() {
 
 function bindSortableHeaders() {
   document.querySelectorAll("th[data-sort]").forEach((header) => {
-    header.addEventListener(page === "deliveries.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "click" : "dblclick", () => {
+    const toggleSort = () => {
       activeSort = userSortKey === header.dataset.sort
         ? { key: activeSort.key, direction: activeSort.direction === "asc" ? "desc" : "asc" }
         : { key: header.dataset.sort, direction: "asc" };
@@ -882,7 +881,16 @@ function bindSortableHeaders() {
       else if (page === "designer.html") void renderDesigner();
       else if (page === "admin.html") renderAdminRows();
       else if (page === "deliveries.html") void loadDeliveries(true);
-    });
+      else if (page === "production-store.html") renderDeliveryRows();
+    };
+    header.addEventListener(page === "deliveries.html" || page === "production-store.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "click" : "dblclick", toggleSort);
+    if (page === "production-store.html") {
+      header.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        toggleSort();
+      });
+    }
   });
   updateSortIndicators();
 }
@@ -2470,7 +2478,7 @@ function statusBoardDisplayStatus(row, stage) {
         : row.goods_status === "not_ready" ? "Not ready" : row.goods_status || "—";
   }
   if (stage === "salesperson") {
-    return row.handoff_status === "pending_details" ? "Awaiting salesperson"
+    return row.handoff_status === "pending_details" ? "—"
       : row.handoff_status === "requested" ? "Requested" : row.handoff_status || "—";
   }
   if (stage === "production") return row.production_status || "—";
@@ -2538,7 +2546,6 @@ function statusBoardRenderSummary(stages) {
     .reduce((sum, [key]) => sum + stages[key].length, 0);
   const summary = [
     ["Open requests", openCount, "blue"],
-    ["Awaiting salesperson", stages.salesperson.length, "purple"],
     ["In production", stages.production.length, "orange"],
     ["In dispatch", stages.dispatch.length, "blue"],
     ["Delivered in range", stages.delivered.length, "green"]
@@ -3143,7 +3150,7 @@ async function submitDelivery(event) {
     };
     const result = productionEditId
       ? await client.from("deliveries").update(values)
-        .eq("id", productionEditId).eq("created_by", profile.id).select("id,ref_no").single()
+        .eq("id", productionEditId).select("id,ref_no").single()
       : deliveryEditId
       ? await client.from("deliveries").update({
         ...values,
@@ -3193,7 +3200,7 @@ async function submitDelivery(event) {
 
 function openDeliveryEdit(row) {
   if (profile.role !== "salesperson" || row.salesperson_id !== profile.id
-    || row.handoff_status !== "pending_details" || deliveryGoodsStatus(row) !== "ready") return;
+    || row.handoff_status !== "pending_details") return;
   const form = document.querySelector("#delivery-request-form");
   const dialog = document.querySelector("#delivery-edit-dialog");
   deliveryEditId = row.id;
@@ -3219,7 +3226,7 @@ function openDeliveryEdit(row) {
 
 function openProductionDeliveryEdit(row) {
   if (!isProductionStoreMode() || !hasProductionStoreAccess(profile)
-    || row.created_by !== profile.id) return;
+    || (row.created_by !== profile.id && row.created_by !== row.salesperson_id)) return;
   const form = document.querySelector("#delivery-request-form");
   if (!form.classList.contains("hidden") && !confirm("Discard the current unsaved delivery entry?")) return;
   productionEditId = row.id;
@@ -3690,12 +3697,12 @@ function renderDeliveryRows() {
       return status === productionGoodsFilter;
     })
     : matchingRows;
-  const filtered = page === "production-store.html" ? visibleRows : sortRows(visibleRows);
+  const filtered = sortRows(visibleRows);
   tbody.innerHTML = filtered.map((row) => {
     const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}`;
     const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
     const deliveryColumns = page === "production-store.html"
-      ? `<td><strong>${escapeHtml(row.ref_no || "—")}</strong></td><td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(deliverySalespersonName(row))}</td><td>${escapeHtml(row.client_name || "—")}${row.contact_number ? `<br><small class="muted">${escapeHtml(row.contact_number)}</small>` : ""}</td>${itemsCell}<td>${deliveryGoodsStatus(row)
+      ? `<td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td>${itemsCell}<td>${escapeHtml(row.delivery_date || "—")}</td><td>${deliveryGoodsStatus(row)
         ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
         : "—"}</td>`
       : page === "deliveries.html"
@@ -3703,12 +3710,12 @@ function renderDeliveryRows() {
         ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
         : "—"}</td>`
       : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
+    const productionStatus = row.production_status || "—";
+    const productionCell = `<td>${productionStatus === "—" ? "—" : `<span class="delivery-status-${productionStatus === "Ready" ? "green" : "red"}">${escapeHtml(productionStatus)}</span>`}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>`;
     return `<tr data-entry-id="${escapeHtml(row.id)}">
-      <td>${escapeHtml(row.sr)}</td>${page === "production-store.html" ? "" : `<td>${escapeHtml(row.delivery_date || "—")}<br>${row.delivery_date ? escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time)) : "—"}</td>`}
-      ${deliveryColumns}
-      <td><span class="${row.handoff_status === "pending_details" ? "delivery-status-orange" : row.production_status === "Ready" ? "delivery-status-green" : "delivery-status-red"}">${row.handoff_status === "pending_details" ? "Awaiting salesperson" : escapeHtml(row.production_status)}</span>${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>
+      ${page === "production-store.html" ? `${deliveryColumns}${productionCell}` : `<td>${escapeHtml(row.sr)}</td><td>${escapeHtml(row.delivery_date || "—")}<br>${row.delivery_date ? escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time)) : "—"}${deliveryColumns}${productionCell}`}
       <td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>
-      <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" && deliveryGoodsStatus(row) === "ready" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && row.created_by === profile.id ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td></tr>`;
+      <td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td></tr>`;
   }).join("");
   initializeScrollableTables(tbody.closest("table"));
   dispatchValues.forEach((values, id) => {
@@ -4136,6 +4143,8 @@ async function initDeliveries() {
       searchInput.value = "";
       salespersonFilter.value = "";
       productionGoodsFilter = DEFAULT_GOODS_FILTER;
+      activeSort = { key: "delivery_schedule", direction: "asc" };
+      userSortKey = "delivery_schedule";
       renderDeliveryRows();
     });
   }
