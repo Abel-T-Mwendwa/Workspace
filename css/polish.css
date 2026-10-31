@@ -667,7 +667,7 @@ textarea:focus {
 
 .delivery-item-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(160px, 1.4fr) minmax(110px, .7fr) minmax(220px, 2fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) auto;
   align-items: end;
   gap: 8px;
   padding: 12px;
@@ -682,6 +682,7 @@ textarea:focus {
 }
 
 .delivery-item-row input,
+.delivery-item-row select,
 .delivery-item-row button {
   min-height: 40px;
   padding: 8px;
@@ -739,6 +740,19 @@ textarea:focus {
   overflow-x: auto;
   padding: 2px 0 8px;
   scrollbar-width: thin;
+}
+
+.delivery-branding-filter-row {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  color: #36445c;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.delivery-branding-filter-row.hidden {
+  display: none;
 }
 
 #delivery-role-status-chips .production-goods-chip,

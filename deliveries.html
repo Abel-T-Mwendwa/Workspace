@@ -25,6 +25,7 @@
       <div class="section-heading"><h2>Delivery requests</h2></div>
       <div class="toolbar"><input id="delivery-search" placeholder="Search SO number or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
       <div id="delivery-role-status-chips" class="production-goods-chips hidden" role="group" aria-label="Filter by delivery status"></div>
+      <div id="delivery-branding-filter-row" class="delivery-branding-filter-row hidden"><span>Branding</span><div id="delivery-branding-filter-chips" class="production-goods-chips" role="group" aria-label="Filter by branding mode"></div></div>
       <div id="delivery-filter-bar" class="delivery-filter-bar">
         <div class="delivery-date-range">
           <label>From<input id="delivery-date-from" type="date" aria-label="Delivery date from"></label>
@@ -36,7 +37,7 @@
         <div class="delivery-filter-actions"><button type="button" class="secondary" id="delivery-clear-filters">Clear filters</button><button type="button" class="quiet" id="delivery-reset-filters">Reset to default</button></div>
       </div>
       <p class="delivery-filter-summary"><span id="delivery-results-count">Showing 0 deliveries</span><span id="delivery-active-filters"></span></p>
-      <div class="table-wrap"><table><thead><tr><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th>Client / Contact</th><th>Delivery address</th><th>SO number(s)</th><th>Items</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr id="delivery-table-head"><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th>Client / Contact</th><th>Delivery address</th><th>SO number(s)</th><th>Items</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
       <p id="delivery-empty" class="empty-state hidden">No deliveries match these filters.</p>
     </section>
   </main>
