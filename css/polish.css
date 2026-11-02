@@ -3884,6 +3884,18 @@ body:has(.status-board-page) .topbar button {
   white-space: nowrap;
 }
 
+.status-board-details-pending {
+  display: inline-block;
+  width: fit-content;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eee9ff;
+  color: #4b32b4;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .status-board-status {
   min-height: 0;
   flex: 0 0 auto;

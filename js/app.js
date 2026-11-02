@@ -2545,12 +2545,11 @@ function setupDeliveryBrandingPicker(form) {
 }
 
 function statusBoardStageOf(row) {
-  if (row.delivered_at) return "delivered";
-  if (row.production_status === "Ready" || row.dispatched_at || row.dispatch_status === "Delivered") return "dispatch";
-  if (!row.goods_status) return "production";
-  if (row.goods_status === "ready" && row.handoff_status === "requested") return "production";
-  if (row.goods_status === "ready" && row.handoff_status === "pending_details") return "salesperson";
-  return ["partial", "not_ready"].includes(row.goods_status) ? "production_store" : "production";
+  if (row.delivered_at || row.dispatch_status === "Delivered") return "delivered";
+  if (row.production_status === "Ready" || row.dispatched_at) return "dispatch";
+  if (["ready", "partial"].includes(row.goods_status)) return "production";
+  if (!row.goods_status || row.goods_status === "not_ready") return "production_store";
+  return "production";
 }
 
 function statusBoardDate(value) {
@@ -2756,10 +2755,12 @@ function statusBoardCard(row, stage) {
   const salesperson = statusBoardProfiles.get(row.salesperson_id || row.created_by) || "—";
   const href = stage === "production_store" ? "./production-store.html" : "./deliveries.html";
   const items = statusBoardFullItems(row);
+  const detailsPending = row.handoff_status === "pending_details";
   return `<a class="status-board-card status-board-card-${colour}" href="${href}?open=${escapeHtml(encodeURIComponent(row.id))}" aria-label="SR ${escapeHtml(row.sr)}, ${escapeHtml(row.ref_no)}, ${escapeHtml(status)}">
     <div class="status-board-card-heading"><strong>${escapeHtml(soNumbers.join(", ") || "—")}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span></div>
     ${row.client_name?.trim() ? `<div class="status-board-card-client">${escapeHtml(row.client_name)}</div>` : ""}
     <div class="status-board-card-meta">${escapeHtml(salesperson)} · ${escapeHtml(row.ref_no || "—")}</div>
+    ${detailsPending ? '<div class="status-board-details-pending">Details pending</div>' : ""}
     <div class="status-board-card-items" title="${escapeHtml(items)}">${escapeHtml(items)}</div>
   </a>`;
 }
@@ -2829,10 +2830,11 @@ function statusBoardRenderTable(stages, stage) {
   body.innerHTML = stageRows.map((row) => {
     const status = statusBoardDisplayStatus(row, stage);
     const colour = statusBoardRecordColour(row, stage);
+    const detailsPending = row.handoff_status === "pending_details";
     return `<tr tabindex="0" role="button" data-status-record="${escapeHtml(row.id)}">
       <td>${escapeHtml(row.ref_no || "—")}</td><td>${escapeHtml(row.sr || "—")}</td><td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td>
       <td>${escapeHtml(statusBoardProfiles.get(row.salesperson_id || row.created_by) || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td><td>${escapeHtml(statusBoardItems(row))}</td>
-      <td><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span></td>
+      <td><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span>${detailsPending ? '<br><small class="status-board-details-pending">Details pending</small>' : ""}</td>
     </tr>`;
   }).join("");
   body.querySelectorAll("[data-status-record]").forEach((row) => {
@@ -2861,9 +2863,10 @@ function statusBoardTimelineRows(row) {
   const current = statusBoardStageOf(row);
   const currentIndex = STATUS_BOARD_STAGES.findIndex(([key]) => key === current);
   return STATUS_BOARD_STAGES.map(([stage, label], index) => {
-    const done = index < currentIndex || stage === "delivered" && current === "delivered";
-    const isCurrent = stage === current && !done;
-    const statusColour = statusBoardRecordColour(row, stage);
+    const detailsPending = stage === "salesperson" && row.handoff_status === "pending_details";
+    const done = !detailsPending && (index < currentIndex || stage === "delivered" && current === "delivered");
+    const isCurrent = stage === current && !done || detailsPending;
+    const statusColour = detailsPending ? statusBoardColour("pending_details") : statusBoardRecordColour(row, stage);
     const colour = done ? "green" : isCurrent ? statusColour : "grey";
     const whoId = stage === "production_store" ? row.created_by : stage === "salesperson" ? row.salesperson_id : null;
     const time = stage === "production_store" ? row.created_at
@@ -2871,7 +2874,7 @@ function statusBoardTimelineRows(row) {
         : stage === "dispatch" ? row.dispatched_at || row.ready_at
           : stage === "delivered" ? row.delivered_at : null;
     const who = whoId ? statusBoardProfiles.get(whoId) || "—" : "—";
-    const status = statusBoardDisplayStatus(row, stage);
+    const status = detailsPending ? "Details pending" : statusBoardDisplayStatus(row, stage);
     const marker = done ? "✓" : isCurrent ? "●" : "○";
     return `<li class="status-board-timeline-step ${done ? "is-complete" : isCurrent ? `is-current status-board-timeline-${colour}` : "is-future"}">
       <span class="status-board-timeline-marker" aria-hidden="true">${marker}</span><div><strong>${escapeHtml(label)}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span>
@@ -3265,7 +3268,8 @@ async function submitDelivery(event) {
         ...values,
         salesperson_id: profile.id,
         handoff_status: "requested"
-      }).eq("id", deliveryEditId).eq("salesperson_id", profile.id).eq("handoff_status", "pending_details").select("id,ref_no").single()
+      }).eq("id", deliveryEditId).eq("salesperson_id", profile.id)
+        .in("handoff_status", ["pending_details", "requested"]).select("id,ref_no").single()
       : await client.from("deliveries").insert({
         ...values,
         created_by: profile.id,
@@ -3307,9 +3311,16 @@ async function submitDelivery(event) {
   }
 }
 
+function canSalespersonEditDelivery(row) {
+  return profile.role === "salesperson"
+    && row.salesperson_id === profile.id
+    && ["pending_details", "requested"].includes(row.handoff_status)
+    && row.dispatch_status !== "Delivered"
+    && !row.delivered_at;
+}
+
 function openDeliveryEdit(row) {
-  if (profile.role !== "salesperson" || row.salesperson_id !== profile.id
-    || row.handoff_status !== "pending_details") return;
+  if (!canSalespersonEditDelivery(row)) return;
   const form = document.querySelector("#delivery-request-form");
   const dialog = document.querySelector("#delivery-edit-dialog");
   deliveryEditId = row.id;
@@ -3668,11 +3679,12 @@ async function loadActiveVehicles() {
 
 function deliveryActions(row) {
   const role = profile.role;
-  if (row.handoff_status === "pending_details") return "";
   if (row.dispatch_status === "Delivered") return "";
   if ((role === "production" || role === "admin") && row.production_status !== "Ready") {
-    return `<button class="primary" data-delivery-ready="${escapeHtml(row.id)}">Ready</button>`;
+    const goodsReady = ["ready", "partial"].includes(deliveryGoodsStatus(row));
+    return `<button class="primary" data-delivery-ready="${escapeHtml(row.id)}"${goodsReady ? "" : " disabled"}>Ready</button>`;
   }
+  if (row.handoff_status === "pending_details") return "";
   if (role === "dispatch" || role === "admin") {
     if (row.production_status !== "Ready") return "";
     if (!row.dispatched_at) return `<button class="primary" data-delivery-dispatch="${escapeHtml(row.id)}">Packed</button>`;
@@ -3887,7 +3899,7 @@ function renderDeliveryRows() {
     const productionStatus = row.production_status || "—";
     const productionCell = `<td>${productionStatus === "—" ? "—" : `<span class="delivery-status-${productionStatus === "Ready" ? "green" : "red"}">${escapeHtml(productionStatus)}</span>`}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>`;
     const dispatchCell = `<td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>`;
-    const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${profile.role === "salesperson" && !isProductionStoreMode() && row.salesperson_id === profile.id && row.handoff_status === "pending_details" ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
+    const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
     const rowDataCells = page === "production-store.html" || page === "deliveries.html" && ["production", "salesperson"].includes(profile.role)
       ? deliveryColumns
       : `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}${deliveryColumns}`;
