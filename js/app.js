@@ -3403,7 +3403,7 @@ async function loadDeliverySalespeople() {
 }
 
 function deliveryStatusFilter(query) {
-  if (["production", "dispatch"].includes(profile.role)) {
+  if (profile.role === "dispatch") {
     query = query.neq("handoff_status", "pending_details");
   }
   if (page === "deliveries.html") {
@@ -3595,7 +3595,8 @@ async function initializeDeliveryFilters() {
 
 async function queryDeliveryPage(offset, search = "", searchField = "ref_no") {
   const ascending = activeSort.direction === "asc";
-  let query = deliveryStatusFilter(client.from(deliveryReadTable()).select(deliverySelect, { count: "exact" }));
+  const select = profile.role === "salesperson" ? `${deliverySelect},goods_status_updated_at` : deliverySelect;
+  let query = deliveryStatusFilter(client.from(deliveryReadTable()).select(select, { count: "exact" }));
   if (activeSort.key === "delivery_schedule") {
     query = query.order("delivery_date", { ascending, nullsFirst: false })
       .order("delivery_time", { ascending, nullsFirst: false });
@@ -3749,7 +3750,7 @@ function isDeliveryRoleChipMode() {
 function deliveryRoleStatusMatches(row, value) {
   if (value === "all") return true;
   if (profile.role === "production") {
-    if (value === "pending") return row.goods_status === "ready" && row.production_status !== "Ready";
+    if (value === "pending") return row.production_status === "Not ready";
     return row.production_status === value;
   }
   if (value === "pending" || value === "not-packed") {
@@ -3804,7 +3805,7 @@ function configureDeliveryTableHeaders() {
   if (profile.role === "production") {
     header.innerHTML = '<th data-sort="delivery_schedule">Delivery date</th><th>Client name</th><th>Delivery address</th><th>SO number</th><th>Items</th><th>Branding</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th>';
   } else if (profile.role === "salesperson") {
-    header.innerHTML = '<th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery date</th><th>Client/contact</th><th>Delivery address</th><th>SO number</th><th>Items</th><th>Salesperson</th><th>Branding</th><th>Production</th><th>Dispatch</th><th>Actions</th>';
+    header.innerHTML = '<th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery date</th><th>Client/contact</th><th>Delivery address</th><th>SO number</th><th>Items</th><th>Salesperson</th><th>Branding</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th>';
   }
 }
 
@@ -3875,7 +3876,9 @@ function renderDeliveryRows() {
         ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
         : "—"}</td>`
       : page === "deliveries.html" && profile.role === "salesperson"
-      ? `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td>${brandingCell}`
+      ? `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td>${brandingCell}<td>${deliveryGoodsStatus(row)
+        ? `<span class="goods-status-pill delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>${row.goods_status_updated_at ? `<br><small>${escapeHtml(localDateTime(row.goods_status_updated_at))}</small>` : ""}`
+        : "—"}</td>`
       : page === "deliveries.html"
       ? `<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
         ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
