@@ -2442,7 +2442,106 @@ function deliveryGoodsStatus(row) {
 
 function deliveryBrandingModes(row) {
   const items = Array.isArray(row.items) ? row.items : [];
-  return [...new Set(items.map((item) => String(item.branding_mode || "").trim()).filter(Boolean))];
+  return [...new Set(items.flatMap((item) => String(item.branding_mode || "").split(",").map((mode) => mode.trim()).filter(Boolean)))];
+}
+
+function setDeliveryBrandingSelection(form, modes) {
+  const root = form.querySelector("[data-branding-multiselect]");
+  const selected = brandingModes.filter((mode) => modes.includes(mode));
+  form.elements.branding_modes.value = selected.join(", ");
+  const chips = root.querySelector("[data-branding-chips]");
+  chips.replaceChildren();
+  if (!selected.length) {
+    const placeholder = document.createElement("span");
+    placeholder.className = "branding-picker-placeholder";
+    placeholder.textContent = "Select modes...";
+    chips.append(placeholder);
+  }
+  selected.forEach((mode) => {
+    const chip = document.createElement("span");
+    chip.className = "branding-picker-chip";
+    chip.textContent = mode;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "branding-picker-chip-remove";
+    remove.setAttribute("aria-label", `Remove ${mode}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      setDeliveryBrandingSelection(form, selected.filter((item) => item !== mode));
+      root.querySelector(`[data-branding-mode="${CSS.escape(mode)}"]`).checked = false;
+    });
+    chip.append(remove);
+    chips.append(chip);
+  });
+  root.querySelector("[data-branding-clear]").hidden = !selected.length;
+  root.querySelectorAll("[data-branding-mode]").forEach((input) => {
+    input.checked = selected.includes(input.value);
+  });
+}
+
+function setupDeliveryBrandingPicker(form) {
+  const root = form.querySelector("[data-branding-multiselect]");
+  const control = root.querySelector("[data-branding-toggle]");
+  const options = root.querySelector("[data-branding-options]");
+  const close = () => {
+    options.hidden = true;
+    control.setAttribute("aria-expanded", "false");
+  };
+  const toggle = () => {
+    options.hidden = !options.hidden;
+    control.setAttribute("aria-expanded", String(!options.hidden));
+  };
+  options.replaceChildren(...brandingModes.map((mode) => {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = mode;
+    checkbox.dataset.brandingMode = "";
+    checkbox.setAttribute("aria-label", mode);
+    checkbox.addEventListener("change", () => {
+      const selected = brandingModes.filter((item) => root.querySelector(`[data-branding-mode][value="${CSS.escape(item)}"]`).checked);
+      setDeliveryBrandingSelection(form, selected);
+    });
+    label.append(checkbox, document.createTextNode(mode));
+    return label;
+  }));
+  root.addEventListener("click", (event) => {
+    if (options.contains(event.target) || event.target.closest("[data-branding-clear], .branding-picker-chip-remove")) return;
+    toggle();
+  });
+  root.querySelector("[data-branding-clear]").addEventListener("click", (event) => {
+    event.stopPropagation();
+    setDeliveryBrandingSelection(form, []);
+  });
+  control.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggle();
+  });
+  options.addEventListener("keydown", (event) => {
+    const checkboxes = [...options.querySelectorAll("[data-branding-mode]")];
+    const index = checkboxes.indexOf(event.target);
+    if (index < 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      checkboxes[(index + direction + checkboxes.length) % checkboxes.length].focus();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      event.target.checked = !event.target.checked;
+      event.target.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || options.hidden) return;
+    event.preventDefault();
+    close();
+    control.focus();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!root.contains(event.target)) close();
+  });
+  setDeliveryBrandingSelection(form, []);
 }
 
 function statusBoardStageOf(row) {
@@ -3001,26 +3100,9 @@ function renderItemLineEditor() {
       ["so_number", "SO number", "text"],
       ["item_name", "Item name", "text"],
       ["quantity", "Quantity (pcs)", "number"],
-      ["branding_mode", "Mode of branding", "select"],
       ["address", "Address to deliver", "text"]
     ];
     for (const [name, labelText, type] of fields) {
-      if (name === "branding_mode") {
-        const label = document.createElement("label");
-        label.textContent = labelText;
-        const select = document.createElement("select");
-        select.name = name;
-        select.innerHTML = `<option value="">Select a mode...</option>${brandingModes.map((mode) =>
-          `<option value="${escapeHtml(mode)}">${escapeHtml(mode)}</option>`
-        ).join("")}`;
-        select.value = line.branding_mode || "";
-        select.addEventListener("change", () => {
-          line.branding_mode = select.value;
-        });
-        label.append(select);
-        row.append(label);
-        continue;
-      }
       const label = document.createElement("label");
       label.textContent = labelText;
       const input = document.createElement("input");
@@ -3065,7 +3147,7 @@ function renderItemLineEditor() {
     remove.textContent = "Remove";
     remove.addEventListener("click", () => {
       if (deliveryItemsState.lines.length === 1) {
-        deliveryItemsState.lines[0] = { so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", branding_mode: "", goods_status: "" };
+        deliveryItemsState.lines[0] = { so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" };
       } else {
         deliveryItemsState.lines.splice(index, 1);
       }
@@ -3087,7 +3169,7 @@ function openDeliveryItems() {
   const existing = Array.isArray(parsed) ? parsed : [];
   deliveryItemsState = {
     initial: existing.map((line) => ({ ...line })),
-    lines: (existing.length ? existing : [{ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", branding_mode: "", goods_status: "" }])
+    lines: (existing.length ? existing : [{ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" }])
       .map((line) => ({ ...line }))
   };
   document.querySelector("#delivery-items-message").textContent = "";
@@ -3128,7 +3210,11 @@ async function submitDelivery(event) {
     toast("Add valid item details before requesting delivery.", "error");
     return;
   }
-  const items = deliveryItemsMarkup(parsedItems);
+  const brandingModeValue = String(payload.branding_modes || "").trim();
+  const items = deliveryItemsMarkup(parsedItems).map((line) => ({
+    ...line,
+    branding_mode: brandingModeValue || null
+  }));
   if (productionEntry) {
     items.forEach((line) => {
       if (!hasSoNumber(line.so_number)) line.so_number = "";
@@ -3231,6 +3317,7 @@ function openDeliveryEdit(row) {
   form.elements.client_name.value = row.client_name || "";
   form.elements.contact_name.value = row.contact_name || "";
   form.elements.contact_number.value = row.contact_number || "";
+  setDeliveryBrandingSelection(form, deliveryBrandingModes(row));
   form.elements.delivery_date.value = row.delivery_date || "";
   updateDeliverySlotOptions();
   form.elements.delivery_time.value = row.delivery_time_any ? "any" : row.delivery_time || "";
@@ -3255,6 +3342,7 @@ function openProductionDeliveryEdit(row) {
   productionEditId = row.id;
   form.elements.salesperson_id.value = row.salesperson_id;
   form.elements.salesperson_id.disabled = true;
+  setDeliveryBrandingSelection(form, deliveryBrandingModes(row));
   form.elements.client_name.value = row.client_name || "";
   form.elements.contact_name.value = row.contact_name || "";
   form.elements.contact_number.value = row.contact_number || "";
@@ -4039,8 +4127,8 @@ function openDeliveryItemsView(row, trigger) {
   const soNumbers = deliverySoNumbers(row);
   const content = document.querySelector("#delivery-items-view-content");
   const goodsStatusColumn = page === "production-store.html" || deliveryEditId;
-  content.innerHTML = `<h3>SO number(s)</h3><p>${soNumbers.length ? soNumbers.map(escapeHtml).join(", ") : "—"}</p><table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Mode of branding</th><th>Address to deliver</th>${goodsStatusColumn ? "<th>Goods status</th>" : ""}</tr></thead><tbody>${items.map((item) =>
-    `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.branding_mode || "—")}</td><td>${escapeHtml(item.address)}</td>${goodsStatusColumn ? `<td>${escapeHtml(deliveryGoodsStatusLabel(item.goods_status))}</td>` : ""}</tr>`
+  content.innerHTML = `<h3>SO number(s)</h3><p>${soNumbers.length ? soNumbers.map(escapeHtml).join(", ") : "—"}</p><table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Address to deliver</th>${goodsStatusColumn ? "<th>Goods status</th>" : ""}</tr></thead><tbody>${items.map((item) =>
+    `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.address)}</td>${goodsStatusColumn ? `<td>${escapeHtml(deliveryGoodsStatusLabel(item.goods_status))}</td>` : ""}</tr>`
   ).join("")}</tbody></table>`;
   initializeScrollableTables(content.querySelector("table"));
   const dialog = document.querySelector("#delivery-items-view-dialog");
@@ -4085,11 +4173,12 @@ async function openDeliveryView(row, trigger) {
     ${["production", "dispatch"].includes(profile.role) ? "" : `<div><dt>Contact name</dt><dd>${escapeHtml(row.contact_name)}</dd></div>
     <div><dt>Contact number</dt><dd>${escapeHtml(row.contact_number)}</dd></div>`}
     <div><dt>Delivery date and time</dt><dd>${escapeHtml(row.delivery_date || "—")} · ${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}</dd></div>
+    <div><dt>Mode of branding</dt><dd>${escapeHtml(deliveryBrandingModes(row).join(", ") || "—")}</dd></div>
     <div><dt>Special instruction</dt><dd>${escapeHtml(row.special_instruction || "—")}</dd></div>
   </dl>
   <h3>SO number(s)</h3><p>${soNumbers.length ? soNumbers.map(escapeHtml).join(", ") : "—"}</p>
-  <h3>Items</h3><div class="table-wrap"><table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Mode of branding</th><th>Address</th></tr></thead><tbody>${items.map((item) =>
-    `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.branding_mode || "—")}</td><td>${escapeHtml(item.address)}</td></tr>`
+  <h3>Items</h3><div class="table-wrap"><table><thead><tr><th>SO number</th><th>Item name</th><th>Quantity (pcs)</th><th>Address</th></tr></thead><tbody>${items.map((item) =>
+    `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.address)}</td></tr>`
   ).join("")}</tbody></table></div>
   <dl class="delivery-detail-grid">
     <div><dt>Production status</dt><dd>${escapeHtml(row.production_status)}${row.ready_at ? ` · ${escapeHtml(localDateTime(row.ready_at))}` : ""}</dd></div>
@@ -4167,6 +4256,7 @@ async function initDeliveries() {
   if (!productionEntry && profile.role !== "salesperson" && profile.role !== "admin") requestPanel.classList.add("hidden");
   else {
     const form = document.querySelector("#delivery-request-form");
+    setupDeliveryBrandingPicker(form);
     document.querySelector("#delivery-salesperson-field")?.classList.toggle("hidden", !productionEntry);
     configureDeliveryForm(form, productionEntry);
     if (productionEntry) await loadDeliverySalespeople();
@@ -4186,6 +4276,7 @@ async function initDeliveries() {
       setTimeout(() => {
         document.querySelector('[name="items"]').value = "[]";
         document.querySelector("#delivery-items-open").textContent = "Click to add item details";
+        setDeliveryBrandingSelection(form, []);
       });
     });
     if (page === "deliveries.html") {
@@ -4236,7 +4327,7 @@ async function initDeliveries() {
     });
   }
   document.querySelector("#delivery-item-add").addEventListener("click", () => {
-    deliveryItemsState.lines.push({ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", branding_mode: "", goods_status: "" });
+    deliveryItemsState.lines.push({ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" });
     renderItemLineEditor();
     document.querySelector("#delivery-item-lines").lastElementChild?.querySelector("input")?.focus();
   });
