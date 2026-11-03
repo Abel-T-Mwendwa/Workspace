@@ -3244,7 +3244,7 @@ async function submitDelivery(event) {
     toast("Enter a valid contact number.", "error");
     return;
   }
-  if (payload.delivery_date && payload.delivery_date < today) {
+  if (!productionEntry && payload.delivery_date && payload.delivery_date < today) {
     toast("Delivery date cannot be in the past.", "error");
     return;
   }
@@ -3420,9 +3420,6 @@ async function loadDeliverySalespeople() {
 }
 
 function deliveryStatusFilter(query) {
-  if (profile.role === "dispatch") {
-    query = query.neq("handoff_status", "pending_details");
-  }
   if (page === "deliveries.html") {
     const dateFrom = document.querySelector("#delivery-date-from").value;
     const dateTo = document.querySelector("#delivery-date-to").value;
@@ -3690,17 +3687,25 @@ function deliveryActions(row) {
     const goodsReady = ["ready", "partial"].includes(deliveryGoodsStatus(row));
     return `<button class="primary" data-delivery-ready="${escapeHtml(row.id)}"${goodsReady ? "" : " disabled"}>Ready</button>`;
   }
-  if (row.handoff_status === "pending_details") return "";
+  if (row.handoff_status === "pending_details" && role !== "dispatch") return "";
   if (role === "dispatch" || role === "admin") {
     if (row.production_status !== "Ready") return "";
     if (!row.dispatched_at) return `<button class="primary" data-delivery-dispatch="${escapeHtml(row.id)}">Packed</button>`;
     const vehicleOptions = vehicleRows.map((vehicle) =>
       `<option value="${escapeHtml(vehicle.id)}"${row.vehicle_id === vehicle.id ? " selected" : ""}>${escapeHtml(vehicle.registration_number)} · ${escapeHtml(vehicle.description)}</option>`
     ).join("");
+    const dateControl = role === "dispatch" ? `<label class="dispatch-date-control">Delivery date
+      <input type="date" data-delivery-date="${escapeHtml(row.id)}" data-current-date="${escapeHtml(row.delivery_date || "")}" value="${escapeHtml(row.delivery_date || "")}">
+    </label><button class="secondary" data-delivery-date-save="${escapeHtml(row.id)}" disabled>Save date</button>` : "";
+    const canDeliver = Boolean(row.delivery_date && deliveryAddress(row).trim()
+      && row.transport && (row.transport !== "Company" || row.vehicle_id));
     return `<div class="dispatch-controls">
+      ${dateControl}
       <select data-transport="${escapeHtml(row.id)}" aria-label="Transport"><option value="">Choose transport</option><option${row.transport === "Client" ? " selected" : ""}>Client</option><option${row.transport === "Company" ? " selected" : ""}>Company</option></select>
       <select data-vehicle="${escapeHtml(row.id)}" aria-label="Vehicle" class="${row.transport === "Company" ? "" : "hidden"}"><option value="">Choose vehicle…</option>${vehicleOptions}</select>
-      ${row.transport && (row.transport !== "Company" || row.vehicle_id) ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}">Delivered</button>` : ""}
+      ${role === "dispatch"
+        ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}"${canDeliver ? "" : ' disabled title="Set a delivery date, item address, and transport first."'}>Delivered</button>`
+        : row.transport && (row.transport !== "Company" || row.vehicle_id) ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}">Delivered</button>` : ""}
     </div>`;
   }
   return "";
@@ -3879,7 +3884,12 @@ function renderDeliveryRows() {
     : visibleRows;
   const filtered = sortRows(brandingFilteredRows);
   tbody.innerHTML = filtered.map((row) => {
-    const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}`;
+    const contactName = row.contact_name?.trim() || "";
+    const contactNumber = row.contact_number?.trim() || "";
+    const salespersonContact = `${escapeHtml(contactName || "—")}${contactName && contactNumber ? " · " : " "}${escapeHtml(contactNumber || "—")}`;
+    const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${profile.role === "salesperson"
+      ? salespersonContact
+      : row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}`;
     const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
     const brandingCell = `<td>${escapeHtml(deliveryBrandingModes(row).join(", ") || "—")}</td>`;
     const addressCell = `<td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td>`;
@@ -4054,6 +4064,17 @@ function renderDeliveryRows() {
       vehicle_id: select.value || null
     }, null, "Vehicle saved.");
     if (select.isConnected) select.disabled = false;
+  }));
+  tbody.querySelectorAll("[data-delivery-date]").forEach((input) => input.addEventListener("input", () => {
+    const saveButton = tbody.querySelector(`[data-delivery-date-save="${CSS.escape(input.dataset.deliveryDate)}"]`);
+    if (saveButton) saveButton.disabled = input.value === input.dataset.currentDate;
+  }));
+  tbody.querySelectorAll("[data-delivery-date-save]").forEach((button) => button.addEventListener("click", async () => {
+    const input = tbody.querySelector(`[data-delivery-date="${CSS.escape(button.dataset.deliveryDateSave)}"]`);
+    if (!input || input.value === input.dataset.currentDate) return;
+    await updateDelivery(button.dataset.deliveryDateSave, {
+      delivery_date: input.value || null
+    }, button, "Delivery date saved.");
   }));
   tbody.querySelectorAll("[data-delivery-dispatch]").forEach((button) => button.addEventListener("click", async () => {
     const id = button.dataset.deliveryDispatch;
@@ -4281,7 +4302,8 @@ async function initDeliveries() {
     document.querySelector("#delivery-salesperson-field")?.classList.toggle("hidden", !productionEntry);
     configureDeliveryForm(form, productionEntry);
     if (productionEntry) await loadDeliverySalespeople();
-    form.elements.delivery_date.min = today;
+    if (productionEntry) form.elements.delivery_date.removeAttribute("min");
+    else form.elements.delivery_date.min = today;
     updateDeliverySlotOptions();
     form.elements.delivery_date.addEventListener("change", updateDeliverySlotOptions);
     document.querySelector("#delivery-form-toggle").addEventListener("click", () => {
