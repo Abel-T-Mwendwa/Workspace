@@ -1589,25 +1589,31 @@ async function changesFor(artworkIds) {
   return data || [];
 }
 
+async function openChangeArtworkIds(rows) {
+  const changes = await changesFor(rows.map((row) => row.id));
+  return new Set(changes.map((change) => change.artwork_id));
+}
+
 async function renderDesignerTallies() {
   try {
     const rows = visibleDesignerRows();
     const ids = rows.map((row) => row.id);
     const { data: changes, error } = ids.length
-      ? await client.from("artwork_changes").select("id,artwork_id,status,requested_on,done_at").in("artwork_id", ids)
+      ? await client.from("artwork_changes").select("id,artwork_id,status,created_at,done_at").in("artwork_id", ids)
       : { data: [], error: null };
     if (error) throw error;
     const inPeriod = periodBounds(document.querySelector("#designer-period").value);
     const received = rows.filter((row) => inPeriod(row.created_at));
     const changesInPeriod = changes || [];
+    const openArtworkIds = await openChangeArtworkIds(rows);
     document.querySelector("#designer-tallies").innerHTML = tallyMarkup([
       ["Requests received", received.length],
       ["Artworks done", rows.filter((row) => row.status === "Done" && inPeriod(row.done_at)).length],
       ["Artworks pending", received.filter((row) => row.status !== "Done").length],
-      ["Changes requested", changesInPeriod.filter((change) => inPeriod(change.requested_on)).length],
+      ["Changes requested", changesInPeriod.filter((change) => inPeriod(change.created_at)).length],
       ["Changes done", changesInPeriod.filter((change) => change.status === "done" && inPeriod(change.done_at)).length]
     ]);
-    document.querySelector("#change-count").textContent = changes?.length || 0;
+    document.querySelector("#change-count").textContent = openArtworkIds.size;
     document.querySelector("#assignment-count").textContent = assignmentNotifications.length;
   } catch (error) {
     toast(error.message, "error");
@@ -1624,11 +1630,9 @@ async function renderDesigner() {
   const renderToken = ++designerRenderToken;
   try {
     const rows = visibleDesignerRows();
-    const openChanges = await changesFor(rows.map((row) => row.id));
+    const openArtworkIds = await openChangeArtworkIds(rows);
     if (renderToken !== designerRenderToken) return;
     const assignedIds = new Set(assignmentNotifications.map((notice) => notice.artwork_id));
-    const byArtwork = new Map();
-    openChanges.forEach((change) => byArtwork.set(change.artwork_id, [...(byArtwork.get(change.artwork_id) || []), change]));
     const allChangesByArtwork = new Map();
     allChanges.forEach((change) => allChangesByArtwork.set(change.artwork_id, [...(allChangesByArtwork.get(change.artwork_id) || []), change]));
     const filter = document.querySelector("#designer-filter").value;
@@ -1641,18 +1645,20 @@ async function renderDesigner() {
       if (filter === "tomorrow") return row.date_needed === tomorrow();
       if (filter === "pending") return row.status !== "Done";
       if (filter === "done") return row.status === "Done";
-      if (filter === "changes") return byArtwork.has(row.id);
+      if (filter === "changes") return openArtworkIds.has(row.id);
       if (filter === "changes-done") {
         const changes = allChangesByArtwork.get(row.id) || [];
         return changes.length > 0 && changes.every((change) => change.status === "done");
       }
-      if (filter === "assignments") return assignedIds.has(row.id) && row.assigned_designer === profile.id;
+      if (filter === "assignments") return assignedIds.has(row.id)
+        && (row.assigned_designer === profile.id || row.assigned_designer === null);
       return true;
     }));
     const tbody = document.querySelector("#designer-rows");
     tbody.innerHTML = filtered.map((row) => {
       const changes = allChangesByArtwork.get(row.id) || [];
       const pendingChanges = changes.filter((change) => change.status !== "done");
+      const changeReadOnly = row.assigned_designer !== null && row.assigned_designer !== profile.id;
       const otherDetails = [row.category, row.additional_info].filter(Boolean).map(escapeHtml).join(" · ");
       const claimed = row.assigned_designer === profile.id && row.status === "In progress";
       const canStart = row.status !== "Done" && row.status !== "In progress"
@@ -1664,7 +1670,7 @@ async function renderDesigner() {
         <td>${statusBadge(row.status)}</td>
         <td>${changes.length === 0 ? "—" : pendingChanges.length === 0
           ? statusBadge("Change done")
-          : `${statusBadge("Change requested")}${pendingChanges.filter((change) => change.change_text?.trim()).map((change) => `<div class="change-item"><button type="button" class="designer-change-request" data-change-request title="Click to view" aria-haspopup="dialog">${escapeHtml(change.change_text)}</button><small>${escapeHtml(change.requested_by)} · ${localDate(change.requested_on)}</small></div>`).join("")}`}</td>
+          : statusBadge("Change requested")}${changes.length && changeReadOnly ? `<small>Read-only · Assigned to ${escapeHtml(profileName(row.assigned_designer))}</small>` : ""}${pendingChanges.filter((change) => change.change_text?.trim()).map((change) => `<div class="change-item"><button type="button" class="designer-change-request" data-change-request title="Click to view" aria-haspopup="dialog">${escapeHtml(change.change_text)}</button><small>${escapeHtml(change.requested_by)} · ${localDate(change.requested_on)}</small></div>`).join("")}</td>
         <td>${workNotePreviewMarkup(row.id)}</td>
         <td>${escapeHtml(preferredDesignerName(row))}${assignedIds.has(row.id) ? '<br><span class="badge assignment-badge">New assignment</span>' : ""}</td>
         <td><div class="table-actions">${canStart ? `<button class="primary" data-start="${escapeHtml(row.id)}">Start</button>` : ""}
@@ -1676,8 +1682,8 @@ async function renderDesigner() {
     emptyState.textContent = "No jobs match this filter";
     emptyState.classList.toggle("hidden", filtered.length > 0);
     updateSortIndicators();
-    document.querySelector("#change-banner").classList.toggle("hidden", openChanges.length === 0);
-    document.querySelector("#change-banner").textContent = openChanges.length ? `CHANGE REQUESTED · ${openChanges.length} change${openChanges.length === 1 ? "" : "s"} need attention` : "";
+    document.querySelector("#change-banner").classList.toggle("hidden", openArtworkIds.size === 0);
+    document.querySelector("#change-banner").textContent = openArtworkIds.size ? `CHANGE REQUESTED · ${openArtworkIds.size} artwork${openArtworkIds.size === 1 ? "" : "s"} need attention` : "";
     const assignmentBanner = document.querySelector("#assignment-banner");
     assignmentBanner.classList.toggle("hidden", assignmentNotifications.length === 0);
     assignmentBanner.textContent = assignmentNotifications.length
