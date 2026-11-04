@@ -3896,6 +3896,97 @@ body:has(.status-board-page) .topbar button {
   line-height: 1.4;
 }
 
+.status-board-address-urgent,
+.delivery-address-urgent {
+  display: inline-block;
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.delivery-address-missing {
+  color: #b91c1c;
+  font-weight: 650;
+}
+
+tbody tr.delivery-address-urgent-row,
+tbody tr.delivery-address-urgent-row:hover {
+  background: #fff1f2;
+  box-shadow: inset 4px 0 #dc2626;
+}
+
+.production-goods-chip-urgent,
+.production-goods-chip-urgent.is-active {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.production-goods-chip-grey,
+.production-goods-chip-grey.is-active {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.urgent-deliveries-dialog {
+  width: min(620px, calc(100% - 24px));
+  max-height: min(80vh, 720px);
+}
+
+.urgent-deliveries-dialog h2 {
+  color: var(--ink);
+}
+
+.urgent-deliveries-intro {
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.urgent-deliveries-list {
+  display: grid;
+  gap: 8px;
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.urgent-delivery-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.urgent-delivery-item[data-urgent="true"] {
+  border-color: #fecaca;
+  background: #fff1f2;
+  box-shadow: inset 4px 0 #dc2626;
+}
+
+.urgent-delivery-item[data-urgent="true"] strong {
+  color: #b91c1c;
+}
+
+.urgent-delivery-item > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.urgent-delivery-item span {
+  color: #68758a;
+  font-size: 12px;
+}
+
 .status-board-status {
   min-height: 0;
   flex: 0 0 auto;

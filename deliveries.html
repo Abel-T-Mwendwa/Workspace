@@ -13,7 +13,7 @@
       <form id="delivery-request-form" class="request-form form-grid hidden">
         <label>Client name<input name="client_name" maxlength="160" required></label>
         <label>Contact name<input name="contact_name" maxlength="160" required></label>
-        <label>Contact number<input name="contact_number" type="tel" maxlength="32" required placeholder="+254 700 000 000"></label>
+        <label>Contact number<input name="contact_number" type="text" inputmode="text" maxlength="32" required placeholder="+254 700 000 000"></label>
         <div class="wide item-lines-field"><span>Item details</span><button type="button" class="line-field-box" id="delivery-items-open" aria-haspopup="dialog">Click to add item details</button><input type="hidden" name="items" value="[]"></div>
         <div class="branding-mode-field" data-branding-multiselect><span id="delivery-branding-label">Mode of branding</span><div class="branding-picker-control" data-branding-toggle tabindex="0" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="delivery-branding-label"><div class="branding-picker-chips" data-branding-chips><span class="branding-picker-placeholder">Select modes...</span></div><button type="button" class="branding-picker-clear" data-branding-clear aria-label="Clear all branding modes" hidden>×</button><span class="branding-picker-chevron" aria-hidden="true">▾</span></div><input type="hidden" name="branding_modes" value=""><div class="branding-picker-options" data-branding-options role="group" aria-labelledby="delivery-branding-label" hidden></div></div>
         <label>Delivery time<select name="delivery_time" required><option value="">Choose hourly slot</option></select></label>
@@ -24,7 +24,7 @@
     </section>
     <section class="panel">
       <div class="section-heading"><h2>Delivery requests</h2></div>
-      <div class="toolbar"><input id="delivery-search" placeholder="Search SO number or client"><button type="button" class="secondary hidden" id="delivery-more">Load more</button></div>
+      <div class="toolbar"><input id="delivery-search" placeholder="Search SO number or client"></div>
       <div id="delivery-role-status-chips" class="production-goods-chips hidden" role="group" aria-label="Filter by delivery status"></div>
       <div id="delivery-branding-filter-row" class="delivery-branding-filter-row hidden"><span>Branding</span><div id="delivery-branding-filter-chips" class="production-goods-chips" role="group" aria-label="Filter by branding mode"></div></div>
       <div id="delivery-filter-bar" class="delivery-filter-bar">
@@ -42,6 +42,12 @@
       <p id="delivery-empty" class="empty-state hidden">No deliveries match these filters.</p>
     </section>
   </main>
+  <dialog id="urgent-deliveries-dialog" class="urgent-deliveries-dialog" aria-labelledby="urgent-deliveries-title">
+    <div class="section-heading"><h2 id="urgent-deliveries-title">Delivery details needed</h2><button type="button" class="icon-button" data-close-urgent-deliveries aria-label="Close">×</button></div>
+    <p class="urgent-deliveries-intro">Add an item address so these requests can be delivered.</p>
+    <div id="urgent-deliveries-list" class="urgent-deliveries-list"></div>
+    <div class="dialog-actions"><button type="button" class="secondary" data-remind-urgent-deliveries>Remind me in 1 hour</button><button type="button" class="quiet" data-close-urgent-deliveries>Close</button></div>
+  </dialog>
   <dialog id="delivery-edit-dialog" class="line-editor-dialog">
     <div class="line-dialog-content">
       <div class="section-heading"><h2 id="delivery-edit-title">Complete delivery request</h2><button type="button" class="icon-button" data-delivery-edit-cancel aria-label="Close">×</button></div>

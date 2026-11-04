@@ -12,7 +12,7 @@
         <label id="delivery-salesperson-field">Salesperson<select name="salesperson_id" required><option value="">Choose salesperson</option></select></label>
         <label>Client name<input name="client_name" maxlength="160"></label>
         <label>Contact name<input name="contact_name" maxlength="160"></label>
-        <label>Contact number<input name="contact_number" type="tel" maxlength="32" placeholder="+254 700 000 000"></label>
+        <label>Contact number<input name="contact_number" type="text" inputmode="text" maxlength="32" placeholder="+254 700 000 000"></label>
         <div class="wide item-lines-field"><span>Item details</span><button type="button" class="line-field-box" id="delivery-items-open" aria-haspopup="dialog">Click to add item details</button><input type="hidden" name="items" value="[]"></div>
         <div class="branding-mode-field" data-branding-multiselect><span id="delivery-branding-label">Mode of branding</span><div class="branding-picker-control" data-branding-toggle tabindex="0" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="delivery-branding-label"><div class="branding-picker-chips" data-branding-chips><span class="branding-picker-placeholder">Select modes...</span></div><button type="button" class="branding-picker-clear" data-branding-clear aria-label="Clear all branding modes" hidden>×</button><span class="branding-picker-chevron" aria-hidden="true">▾</span></div><input type="hidden" name="branding_modes" value=""><div class="branding-picker-options" data-branding-options role="group" aria-labelledby="delivery-branding-label" hidden></div></div>
         <label>Delivery time<select name="delivery_time"><option value="">Choose hourly slot</option></select></label>

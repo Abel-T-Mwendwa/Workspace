@@ -51,6 +51,7 @@ const DELIVERY_ROLE_STATUS_LABELS = {
     { value: "all", label: "All", style: "all" }
   ],
   dispatch: [
+    { value: "urgent", label: "Urgent", style: "urgent" },
     { value: "pending", label: "Pending", style: "pending" },
     { value: "ready-for-delivery", label: "Ready for delivery", style: "ready" },
     { value: "not-packed", label: "Not packed", style: "partial" },
@@ -79,6 +80,7 @@ let activeWorkNoteRequestId = null;
 let users = [];
 let deliveryRows = [];
 let deliveryRoleStatusFilter = "pending";
+let deliveryUrgentFilter = false;
 let routeRiderChipFilter = "__unassigned";
 let routeStatusChipFilter = "active";
 let statusBoardRows = [];
@@ -91,11 +93,16 @@ let statusBoardUnknownStatuses = new Set();
 let statusBoardReportedIssues = new Set();
 let productionGoodsFilter = DEFAULT_GOODS_FILTER;
 let deliveryBrandingFilter = "all";
-let deliveryTotalCount = 0;
 let assignedPendingDeliveries = [];
+let urgentDeliveryRows = [];
+const deliveryPopupShownKeys = new Set();
+let urgentPopupLastShownAt = 0;
+let deliveryRealtimeTimer = null;
+let deliveryRealtimeIds = new Set();
+let deliveryRowsVersion = 0;
+let deliveryRefreshToken = 0;
 let vehicleRows = [];
 let riderJobRows = [];
-let deliveryOffset = 0;
 let deliveryQueryToken = 0;
 let riderOffset = 0;
 let riderQueryToken = 0;
@@ -881,7 +888,7 @@ function bindSortableHeaders() {
       if (page === "sales.html") renderSales();
       else if (page === "designer.html") void renderDesigner();
       else if (page === "admin.html") renderAdminRows();
-      else if (page === "deliveries.html") void loadDeliveries(true);
+      else if (page === "deliveries.html") renderDeliveryRows();
       else if (page === "production-store.html") renderDeliveryRows();
     };
     header.addEventListener(page === "deliveries.html" || page === "production-store.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "click" : "dblclick", toggleSort);
@@ -1180,7 +1187,11 @@ async function renderPeriodSummary(rootId, periodId, table, cards) {
   const root = document.querySelector(`#${rootId}`);
   const period = document.querySelector(`#${periodId}`)?.value || "day";
   const counts = await Promise.all(cards.map((card) => activityCount(table, period, card)));
-  root.innerHTML = tallyMarkup(cards.map((card, index) => [card.label, counts[index]]));
+  const periodLabel = ({ day: "today", week: "this week", month: "this month" })[period] || period;
+  root.innerHTML = tallyMarkup(cards.map((card, index) => [
+    rootId === "delivery-tallies" ? `${card.label} ${periodLabel}` : card.label,
+    counts[index]
+  ]));
 }
 
 function bindPeriodSummary(periodId, update) {
@@ -2336,7 +2347,7 @@ async function bootstrap() {
 }
 
 const deliverySelect = "id,sr,ref_no,created_at,created_by,salesperson_id,handoff_status,goods_status,client_name,contact_name,contact_number,items,delivery_time,delivery_time_any,delivery_date,special_instruction,production_status,dispatch_status,ready_at,dispatched_at,delivered_at,transport,vehicle_id";
-const PAGE_SIZE = 20;
+const RIDER_PAGE_SIZE = 20;
 const DELIVERY_FILTERS_KEY = "deliveryFilters";
 let deliverySalespersonNames = new Map();
 
@@ -2358,6 +2369,13 @@ function tableColumnWidth(header, index) {
   if (/^(name|username|salesperson|rider|designer preferred|client|client \/ contact|ref no|ref \/ client|registration)$/.test(label)) return 184;
   if (/(item|address|details|description|product|branding|notes|reference|expected|transport|vehicle)/.test(label)) return 224;
   return 164;
+}
+
+function initializeScrollableTableRow(row) {
+  const headers = row.closest("table").querySelectorAll("thead th");
+  [...headers].forEach((header, index) => {
+    if (header.style.width && row.cells[index]) row.cells[index].style.width = header.style.width;
+  });
 }
 
 function initializeScrollableTables(root = document) {
@@ -2382,6 +2400,12 @@ function initializeScrollableTables(root = document) {
   tableRowSliderObserver = new MutationObserver((records) => {
     const changedTables = new Set();
     records.forEach(({ target, addedNodes }) => {
+      if (target instanceof HTMLTableSectionElement && target.closest("table")?.classList.contains("table-scroll-content")) {
+        addedNodes.forEach((node) => {
+          if (node instanceof HTMLTableRowElement) initializeScrollableTableRow(node);
+        });
+        return;
+      }
       if (target instanceof Element) {
         const table = target.closest("table");
         if (table) changedTables.add(table);
@@ -2424,6 +2448,23 @@ function deliverySoNumbers(row) {
 function deliveryAddress(row) {
   const items = Array.isArray(row.items) ? row.items : [];
   return [...new Set(items.map((item) => String(item.address || "").trim()).filter(Boolean))].join(" · ");
+}
+
+function deliveryMissingAddress(row) {
+  return !deliveryAddress(row);
+}
+
+function deliveryDetailsNeeded(row) {
+  return deliveryMissingAddress(row)
+    && row.dispatch_status !== "Delivered"
+    && !row.delivered_at;
+}
+
+function deliveryAddressUrgent(row) {
+  return deliveryMissingAddress(row)
+    && row.goods_status === "ready"
+    && row.production_status === "Ready"
+    && row.dispatch_status === "Not delivered";
 }
 
 function deliverySalespersonName(row) {
@@ -2762,11 +2803,13 @@ function statusBoardCard(row, stage) {
   const href = stage === "production_store" ? "./production-store.html" : "./deliveries.html";
   const items = statusBoardFullItems(row);
   const detailsPending = row.handoff_status === "pending_details";
+  const urgent = deliveryAddressUrgent(row);
   return `<a class="status-board-card status-board-card-${colour}" href="${href}?open=${escapeHtml(encodeURIComponent(row.id))}" aria-label="SR ${escapeHtml(row.sr)}, ${escapeHtml(row.ref_no)}, ${escapeHtml(status)}">
     <div class="status-board-card-heading"><strong>${escapeHtml(soNumbers.join(", ") || "—")}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span></div>
     ${row.client_name?.trim() ? `<div class="status-board-card-client">${escapeHtml(row.client_name)}</div>` : ""}
     <div class="status-board-card-meta">${escapeHtml(salesperson)} · ${escapeHtml(row.ref_no || "—")}</div>
     ${detailsPending ? '<div class="status-board-details-pending">Details pending</div>' : ""}
+    ${urgent ? '<div class="status-board-address-urgent">URGENT: address missing</div>' : ""}
     <div class="status-board-card-items" title="${escapeHtml(items)}">${escapeHtml(items)}</div>
   </a>`;
 }
@@ -3239,9 +3282,8 @@ async function submitDelivery(event) {
     toast("Add complete item lines with a positive whole-number quantity.", "error");
     return;
   }
-  if ((!productionEntry || payload.contact_number.trim())
-    && !/^\+?[0-9][0-9 ()-]{6,30}$/.test(payload.contact_number.trim())) {
-    toast("Enter a valid contact number.", "error");
+  if (!productionEntry && !payload.contact_number.trim()) {
+    toast("Enter a contact number.", "error");
     return;
   }
   if (!productionEntry && payload.delivery_date && payload.delivery_date < today) {
@@ -3308,8 +3350,11 @@ async function submitDelivery(event) {
       form.classList.add("hidden");
       document.querySelector("#delivery-form-toggle").textContent = "New request";
     }
-    await loadDeliveries(true);
-    await refreshAssignedPendingDeliveries();
+    try {
+      await patchDeliveryRowsById([data.id]);
+    } catch (error) {
+      toast(`Saved, but the delivery list could not refresh: ${error.message || "unknown error"}`, "error");
+    }
   } catch (error) {
     toast(error.message || "Could not save the delivery request.", "error");
   } finally {
@@ -3419,45 +3464,6 @@ async function loadDeliverySalespeople() {
   ).join("");
 }
 
-function deliveryStatusFilter(query) {
-  if (page === "deliveries.html") {
-    const dateFrom = document.querySelector("#delivery-date-from").value;
-    const dateTo = document.querySelector("#delivery-date-to").value;
-    const salesperson = document.querySelector("#delivery-salesperson").value;
-    const production = isDeliveryRoleChipMode() ? "" : document.querySelector("#delivery-production-filter").value;
-    const dispatch = isDeliveryRoleChipMode() ? "" : document.querySelector("#delivery-dispatch-filter").value;
-    const search = document.querySelector("#delivery-search").value.trim();
-    const orFilters = [];
-    if (production) query = query.eq("production_status", production);
-    if (dispatch === "not-packed") {
-      query = query.eq("dispatch_status", "Not delivered").is("dispatched_at", null);
-    } else if (dispatch === "packed") {
-      query = query.eq("dispatch_status", "Not delivered").not("dispatched_at", "is", null);
-    } else if (dispatch) {
-      query = query.eq("dispatch_status", dispatch);
-    }
-    if (dateFrom) query = query.gte("delivery_date", dateFrom);
-    if (dateTo) query = query.lte("delivery_date", dateTo);
-    if (salesperson) {
-      orFilters.push(`or(salesperson_id.eq.${salesperson},and(salesperson_id.is.null,created_by.eq.${salesperson}))`);
-    }
-    if (search) {
-      const term = JSON.stringify(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
-      const searchableFields = [`so_numbers_search.ilike.${term}`, `client_name.ilike.${term}`];
-      if (/^\d+$/.test(search)) searchableFields.push(`sr.eq.${search}`);
-      orFilters.push(`or(${searchableFields.join(",")})`);
-    }
-    if (orFilters.length) query = query.or(`and(${orFilters.join(",")})`);
-    return query;
-  }
-  const filter = document.querySelector("#delivery-status-filter")?.value || "";
-  if (filter === "Not ready") return query.eq("production_status", "Not ready");
-  if (filter === "Ready") return query.eq("production_status", "Ready").eq("dispatch_status", "Not delivered");
-  if (filter === "Not delivered") return query.eq("dispatch_status", "Not delivered").not("dispatched_at", "is", null);
-  if (filter === "Delivered") return query.eq("dispatch_status", "Delivered");
-  return query;
-}
-
 function saveDeliveryFilters() {
   try {
     sessionStorage.setItem(DELIVERY_FILTERS_KEY, JSON.stringify({
@@ -3504,32 +3510,23 @@ async function loadDeliveryFilterSalespeople() {
     document.querySelector("#delivery-salesperson-filter").classList.add("hidden");
     return;
   }
-  const salespersonIds = new Set();
-  let offset = 0;
-  while (true) {
-    const { data, error } = await client.from(deliveryReadTable())
-      .select("salesperson_id,created_by")
-      .order("sr")
-      .range(offset, offset + 999);
-    if (error) throw error;
-    (data || []).forEach((row) => {
-      const id = row.salesperson_id || row.created_by;
-      if (id) salespersonIds.add(id);
-    });
-    if ((data || []).length < 1000) break;
-    offset += 1000;
+  const salespersonIds = new Set(deliveryRows.map((row) => row.salesperson_id || row.created_by).filter(Boolean));
+  if (!salespersonIds.size) {
+    select.innerHTML = '<option value="">All salespeople</option>';
+    return;
   }
-  if (!salespersonIds.size) return;
   const { data, error } = await client.from("profiles").select("id,full_name")
     .eq("role", "salesperson").in("id", [...salespersonIds]).order("full_name");
   if (error) throw error;
   const users = data || [];
   deliverySalespersonNames = new Map(users.map((user) => [user.id, user.full_name]));
+  const selected = select.value;
   select.innerHTML = '<option value="">All salespeople</option>' + users.map((user) =>
     `<option value="${escapeHtml(user.id)}">${escapeHtml(user.full_name)}</option>`
   ).join("");
   const savedValue = select.dataset.savedValue;
-  if (savedValue && users.some((user) => user.id === savedValue)) select.value = savedValue;
+  const value = users.some((user) => user.id === selected) ? selected : savedValue;
+  if (value && users.some((user) => user.id === value)) select.value = value;
 }
 
 async function loadProductionStoreSalespeople() {
@@ -3555,7 +3552,7 @@ async function initializeDeliveryFilters() {
   restoreDeliveryFilters();
   await loadDeliveryFilterSalespeople();
   const roleChipMode = isDeliveryRoleChipMode();
-  document.querySelector("#delivery-role-status-chips").classList.toggle("hidden", !roleChipMode);
+  document.querySelector("#delivery-role-status-chips").classList.toggle("hidden", !roleChipMode && !showsDeliveryUrgentPill());
   if (roleChipMode) {
     document.querySelector("#delivery-production-filter").closest("label").classList.add("hidden");
     document.querySelector("#delivery-dispatch-filter").closest("label").classList.add("hidden");
@@ -3572,7 +3569,7 @@ async function initializeDeliveryFilters() {
   filterSelectors.forEach((selector) => {
     document.querySelector(selector).addEventListener("change", () => {
       saveDeliveryFilters();
-      void loadDeliveries(true);
+      renderDeliveryRows();
     });
   });
   document.querySelector("#delivery-clear-filters").addEventListener("click", () => {
@@ -3582,18 +3579,20 @@ async function initializeDeliveryFilters() {
     document.querySelector("#delivery-production-filter").value = "";
     document.querySelector("#delivery-dispatch-filter").value = "";
     deliveryBrandingFilter = "all";
+    deliveryUrgentFilter = false;
     if (roleChipMode) {
       deliveryRoleStatusFilter = "pending";
       document.querySelector("#delivery-search").value = "";
     }
     saveDeliveryFilters();
-    void loadDeliveries(true);
+    renderDeliveryRows();
   });
   document.querySelector("#delivery-reset-filters").addEventListener("click", () => {
     document.querySelector("#delivery-date-from").value = "";
     document.querySelector("#delivery-date-to").value = "";
     document.querySelector("#delivery-salesperson").value = "";
     deliveryBrandingFilter = "all";
+    deliveryUrgentFilter = false;
     if (roleChipMode) {
       deliveryRoleStatusFilter = "pending";
       document.querySelector("#delivery-search").value = "";
@@ -3602,74 +3601,117 @@ async function initializeDeliveryFilters() {
       document.querySelector("#delivery-dispatch-filter").value = "Not delivered";
     }
     saveDeliveryFilters();
-    void loadDeliveries(true);
+    renderDeliveryRows();
   });
   saveDeliveryFilters();
 }
 
-async function queryDeliveryPage(offset, search = "", searchField = "ref_no") {
-  const ascending = activeSort.direction === "asc";
+async function fetchAllDeliveryRows() {
+  const rows = [];
   const select = profile.role === "salesperson" ? `${deliverySelect},goods_status_updated_at` : deliverySelect;
-  let query = deliveryStatusFilter(client.from(deliveryReadTable()).select(select, { count: "exact" }));
-  if (activeSort.key === "delivery_schedule") {
-    query = query.order("delivery_date", { ascending, nullsFirst: false })
-      .order("delivery_time", { ascending, nullsFirst: false });
-  } else {
-    const sortColumn = ["sr", "ref_no", "created_at"].includes(activeSort.key) ? activeSort.key : "sr";
-    query = query.order(sortColumn, { ascending });
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await client.from(deliveryReadTable()).select(select)
+      .order("sr", { ascending: false }).range(offset, offset + 999);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if ((data || []).length < 1000) return rows;
   }
-  if (page !== "deliveries.html" && search) query = query.ilike(searchField, `%${search}%`);
-  query = query.range(offset, offset + PAGE_SIZE - 1);
-  const { data, error, count } = await query;
-  if (error) throw error;
-  return { rows: data || [], count: count || 0 };
 }
 
-async function loadDeliveries(reset = true) {
+async function loadDeliveries() {
   const token = ++deliveryQueryToken;
-  const previousIds = new Set(deliveryRows.map((row) => row.id));
-  const wasLoaded = deliveryRows.length > 0;
-  if (reset) deliveryOffset = 0;
-  const search = document.querySelector("#delivery-search")?.value.trim() || "";
   try {
-    let result;
-    if (page === "production-store.html") {
-      const { data, error } = await client.from(deliveryReadTable()).select(deliverySelect)
-        .order("sr", { ascending: false }).limit(1000);
-      if (error) throw error;
-      result = { rows: data || [], count: (data || []).length };
-    } else if (page === "deliveries.html" || !search) {
-      result = await queryDeliveryPage(deliveryOffset);
-    } else {
-      const results = await Promise.all([
-        queryDeliveryPage(deliveryOffset, search, "ref_no"),
-        queryDeliveryPage(deliveryOffset, search, "client_name")
-      ]);
-      const rows = results.flatMap((response) => response.rows)
-        .filter((row, index, values) => values.findIndex((other) => other.id === row.id) === index);
-      result = { rows, count: rows.length };
-    }
-    const pageRows = result.rows;
+    const rows = await fetchAllDeliveryRows();
     if (token !== deliveryQueryToken) return;
-    deliveryRows = reset ? pageRows : [...deliveryRows, ...pageRows.filter((row) => !deliveryRows.some((old) => old.id === row.id))];
-    deliveryTotalCount = result.count;
-    deliveryOffset = page === "production-store.html" ? pageRows.length : page === "deliveries.html"
-      ? reset ? pageRows.length : deliveryOffset + pageRows.length
-      : reset ? PAGE_SIZE : deliveryOffset + PAGE_SIZE;
+    deliveryRows = rows;
     if (page === "production-store.html") await loadProductionStoreSalespeople();
+    if (page === "deliveries.html") await initializeDeliveryFilters();
     if (token !== deliveryQueryToken) return;
     renderDeliveryRows();
-    if (wasLoaded) {
-      document.querySelectorAll("#delivery-rows [data-entry-id]").forEach((row) => {
-        if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
-      });
-    }
-    document.querySelector("#delivery-more")?.classList.toggle("hidden", page === "deliveries.html"
-      ? deliveryOffset >= deliveryTotalCount
-      : pageRows.length < PAGE_SIZE);
   } catch (error) {
     toast(error.message || "Could not load deliveries.", "error");
   }
+}
+
+function replaceDeliveryRows(updatedRows, ids, render = true) {
+  const updatedById = new Map(updatedRows.map((row) => [row.id, row]));
+  const existingById = new Map(deliveryRows.map((row) => [row.id, row]));
+  for (const id of ids) {
+    const updated = updatedById.get(id);
+    if (updated) existingById.set(id, { ...existingById.get(id), ...updated });
+    else existingById.delete(id);
+  }
+  deliveryRows = [...existingById.values()];
+  if (render) renderDeliveryRows(ids);
+}
+
+async function patchDeliveryRowsById(ids) {
+  if (document.hidden || !ids.length) return;
+  deliveryRowsVersion += 1;
+  const uniqueIds = [...new Set(ids)];
+  const select = profile.role === "salesperson" ? `${deliverySelect},goods_status_updated_at` : deliverySelect;
+  const rows = [];
+  for (let index = 0; index < uniqueIds.length; index += 100) {
+    const { data, error } = await client.from(deliveryReadTable()).select(select)
+      .in("id", uniqueIds.slice(index, index + 100));
+    if (error) throw error;
+    rows.push(...(data || []));
+  }
+  replaceDeliveryRows(rows, uniqueIds, false);
+  if (page === "deliveries.html") {
+    try {
+      await loadDeliveryFilterSalespeople();
+    } catch (error) {
+      toast(error.message || "Could not refresh the salesperson filter.", "error");
+    }
+  }
+  if (page === "production-store.html") {
+    try {
+      await loadProductionStoreSalespeople();
+    } catch (error) {
+      toast(error.message || "Could not refresh production store salespeople.", "error");
+    }
+  }
+  renderDeliveryRows(uniqueIds);
+  await refreshAssignedPendingDeliveries();
+  await refreshUrgentDeliveryAlerts();
+}
+
+async function refreshDeliveryRows() {
+  if (document.hidden) return;
+  const token = ++deliveryRefreshToken;
+  const version = deliveryRowsVersion;
+  const freshRows = await fetchAllDeliveryRows();
+  if (document.hidden || token !== deliveryRefreshToken || version !== deliveryRowsVersion) return;
+  const oldById = new Map(deliveryRows.map((row) => [row.id, row]));
+  const freshById = new Map(freshRows.map((row) => [row.id, row]));
+  const changedIds = new Set();
+  for (const row of freshRows) {
+    const old = oldById.get(row.id);
+    if (!old || JSON.stringify(old) !== JSON.stringify(row)) changedIds.add(row.id);
+  }
+  for (const id of oldById.keys()) {
+    if (!freshById.has(id)) changedIds.add(id);
+  }
+  if (!changedIds.size) return;
+  replaceDeliveryRows(freshRows, [...changedIds], false);
+  if (page === "deliveries.html") {
+    try {
+      await loadDeliveryFilterSalespeople();
+    } catch (error) {
+      toast(error.message || "Could not refresh the salesperson filter.", "error");
+    }
+  }
+  if (page === "production-store.html") {
+    try {
+      await loadProductionStoreSalespeople();
+    } catch (error) {
+      toast(error.message || "Could not refresh production store salespeople.", "error");
+    }
+  }
+  renderDeliveryRows([...changedIds]);
+  await refreshAssignedPendingDeliveries();
+  await refreshUrgentDeliveryAlerts();
 }
 
 async function loadActiveVehicles() {
@@ -3770,8 +3812,13 @@ function isDeliveryRoleChipMode() {
   return page === "deliveries.html" && ["production", "dispatch"].includes(profile.role);
 }
 
+function showsDeliveryUrgentPill() {
+  return page === "deliveries.html" && ["salesperson", "dispatch", "admin"].includes(profile.role);
+}
+
 function deliveryRoleStatusMatches(row, value) {
   if (value === "all") return true;
+  if (value === "urgent") return deliveryAddressUrgent(row);
   if (profile.role === "production") {
     if (value === "pending") return row.production_status === "Not ready";
     return row.production_status === value;
@@ -3788,14 +3835,24 @@ function deliveryRoleStatusMatches(row, value) {
 }
 
 function deliveryRoleStatusPills(rows) {
-  const chips = DELIVERY_ROLE_STATUS_LABELS[profile.role];
+  const labels = DELIVERY_ROLE_STATUS_LABELS[profile.role]
+    || DELIVERY_ROLE_STATUS_LABELS.dispatch.filter(({ value }) => value === "urgent");
+  const chips = labels.map((chip) =>
+    chip.value === "urgent" && !rows.some(deliveryAddressUrgent)
+      ? { ...chip, style: "grey" }
+      : chip);
   const counts = new Map(chips.map(({ value }) => [
     value,
     value === "all" ? rows.length : rows.filter((row) => deliveryRoleStatusMatches(row, value)).length
   ]));
   renderStatusChipButtons(document.querySelector("#delivery-role-status-chips"), chips, counts,
-    deliveryRoleStatusFilter, (value) => {
-      deliveryRoleStatusFilter = value;
+    isDeliveryRoleChipMode() ? deliveryRoleStatusFilter : deliveryUrgentFilter ? "urgent" : "",
+    (value) => {
+      if (isDeliveryRoleChipMode()) {
+        deliveryRoleStatusFilter = value;
+      } else {
+        deliveryUrgentFilter = value === "urgent" ? !deliveryUrgentFilter : false;
+      }
       renderDeliveryRows();
     });
 }
@@ -3832,32 +3889,90 @@ function configureDeliveryTableHeaders() {
   }
 }
 
-function renderDeliveryRows() {
-  const tbody = document.querySelector("#delivery-rows");
-  const dispatchValues = new Map([...tbody.querySelectorAll("[data-transport]")].map((select) => [
-    select.dataset.transport,
-    {
-      transport: select.value,
-      vehicle: tbody.querySelector(`[data-vehicle="${CSS.escape(select.dataset.transport)}"]`)?.value || ""
-    }
-  ]));
+function deliveryMatchesBaseFilters(row) {
   const query = document.querySelector("#delivery-search")?.value.trim().toLowerCase() || "";
-  const productionSalesperson = document.querySelector("#production-salesperson-filter")?.value || "";
-  const matchingRows = deliveryRows.filter((row) => {
-    if (page === "production-store.html") {
-      const salesperson = deliverySalespersonName(row);
-      return (!productionSalesperson || salesperson === productionSalesperson)
-        && (!query || [salesperson, ...deliverySoNumbers(row), row.client_name]
-          .some((value) => String(value || "").toLowerCase().includes(query)));
-    }
-    if (!query) return true;
-    const searchable = page === "deliveries.html"
-      ? [row.client_name, ...deliverySoNumbers(row)]
-      : [row.ref_no, row.client_name, row.contact_name];
-    return searchable.some((value) => String(value || "").toLowerCase().includes(query));
-  });
+  if (page === "production-store.html") {
+    const salesperson = deliverySalespersonName(row);
+    const selectedSalesperson = document.querySelector("#production-salesperson-filter")?.value || "";
+    return (!selectedSalesperson || salesperson === selectedSalesperson)
+      && (!query || [salesperson, ...deliverySoNumbers(row), row.client_name, row.sr]
+        .some((value) => String(value || "").toLowerCase().includes(query)));
+  }
+  if (page !== "deliveries.html") {
+    return !query || [row.ref_no, row.client_name, row.contact_name]
+      .some((value) => String(value || "").toLowerCase().includes(query));
+  }
+  const dateFrom = document.querySelector("#delivery-date-from").value;
+  const dateTo = document.querySelector("#delivery-date-to").value;
+  const salespersonId = document.querySelector("#delivery-salesperson").value;
+  if (dateFrom && (!row.delivery_date || row.delivery_date < dateFrom)) return false;
+  if (dateTo && (!row.delivery_date || row.delivery_date > dateTo)) return false;
+  if (salespersonId && (row.salesperson_id || row.created_by) !== salespersonId) return false;
+  const searchValues = [row.client_name, ...deliverySoNumbers(row)];
+  if (/^\d+$/.test(query)) searchValues.push(row.sr);
+  if (query && !searchValues.some((value) => String(value || "").toLowerCase().includes(query))) return false;
+  if (!isDeliveryRoleChipMode()) {
+    const production = document.querySelector("#delivery-production-filter").value;
+    const dispatch = document.querySelector("#delivery-dispatch-filter").value;
+    if (production && row.production_status !== production) return false;
+    if (dispatch === "not-packed" && !(row.dispatch_status === "Not delivered" && !row.dispatched_at)) return false;
+    if (dispatch === "packed" && !(row.dispatch_status === "Not delivered" && Boolean(row.dispatched_at))) return false;
+    if (dispatch && !["not-packed", "packed"].includes(dispatch) && row.dispatch_status !== dispatch) return false;
+  }
+  return true;
+}
+
+function deliveryRowMarkup(row) {
+  const contactName = row.contact_name?.trim() || "";
+  const contactNumber = row.contact_number?.trim() || "";
+  const salespersonContact = `${escapeHtml(contactName || "—")}${contactName && contactNumber ? " · " : " "}${escapeHtml(contactNumber || "—")}`;
+  const contactDetails = [contactName, contactNumber].filter(Boolean).map(escapeHtml).join(" · ") || "—";
+  const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${profile.role === "salesperson"
+    ? salespersonContact
+    : contactDetails}</span>`}`;
+  const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
+  const brandingCell = `<td>${escapeHtml(deliveryBrandingModes(row).join(", ") || "—")}</td>`;
+  const addressCell = `<td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td>`;
+  const soNumberCell = `<td>${deliverySoNumberCell(row)}</td>`;
+  const deliveryDateCell = `<td>${escapeHtml(row.delivery_date || "—")}${row.delivery_date ? `<br>${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}` : ""}</td>`;
+  const deliveryColumns = page === "production-store.html"
+    ? `<td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td>${itemsCell}<td>${escapeHtml(row.delivery_date || "—")}</td><td>${deliveryGoodsStatus(row)
+      ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
+      : "—"}</td>`
+    : page === "deliveries.html" && profile.role === "production"
+    ? `${deliveryDateCell}<td>${escapeHtml(row.client_name || "—")}</td>${addressCell}${soNumberCell}${itemsCell}${brandingCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
+      ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
+      : "—"}</td>`
+    : page === "deliveries.html" && profile.role === "salesperson"
+    ? `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td>${brandingCell}<td>${deliveryGoodsStatus(row)
+      ? `<span class="goods-status-pill delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>${row.goods_status_updated_at ? `<br><small>${escapeHtml(localDateTime(row.goods_status_updated_at))}</small>` : ""}`
+      : "—"}</td>`
+    : page === "deliveries.html"
+    ? `<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
+      ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
+      : "—"}</td>`
+    : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
+  const productionStatus = row.production_status || "—";
+  const productionCell = `<td>${productionStatus === "—" ? "—" : `<span class="delivery-status-${productionStatus === "Ready" ? "green" : "red"}">${escapeHtml(productionStatus)}</span>`}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>`;
+  const urgent = deliveryAddressUrgent(row);
+  const missingAddressMarker = profile.role === "dispatch" && deliveryDetailsNeeded(row)
+    ? '<br><small class="delivery-address-missing">Address missing, cannot be delivered yet</small>'
+    : profile.role === "salesperson" && urgent
+      ? '<br><small class="delivery-address-urgent">URGENT: address missing</small>'
+      : "";
+  const dispatchCell = `<td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}${missingAddressMarker}</td>`;
+  const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
+  const rowDataCells = page === "production-store.html" || page === "deliveries.html" && ["production", "salesperson"].includes(profile.role)
+    ? deliveryColumns
+    : `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}${deliveryColumns}`;
+  return `<tr data-entry-id="${escapeHtml(row.id)}"${profile.role === "salesperson" && urgent ? ' class="delivery-address-urgent-row"' : ""}>${rowDataCells}${productionCell}${dispatchCell}${actionsCell}</tr>`;
+}
+
+function renderDeliveryRows(changedIds = null) {
+  const tbody = document.querySelector("#delivery-rows");
+  const matchingRows = deliveryRows.filter(deliveryMatchesBaseFilters);
   if (page === "production-store.html") renderProductionGoodsChips(matchingRows);
-  if (isDeliveryRoleChipMode() && profile.role !== "production") deliveryRoleStatusPills(matchingRows);
+  if (showsDeliveryUrgentPill()) deliveryRoleStatusPills(matchingRows);
   const visibleRows = isDeliveryRoleChipMode()
     ? matchingRows.filter((row) => deliveryRoleStatusMatches(row, deliveryRoleStatusFilter))
     : page === "production-store.html"
@@ -3867,6 +3982,8 @@ function renderDeliveryRows() {
       if (productionGoodsFilter === "all") return true;
       return status === productionGoodsFilter;
     })
+    : showsDeliveryUrgentPill() && deliveryUrgentFilter
+    ? matchingRows.filter(deliveryAddressUrgent)
     : matchingRows;
   const brandingFilterRow = document.querySelector("#delivery-branding-filter-row");
   if (page === "deliveries.html" && profile.role === "production") {
@@ -3883,55 +4000,31 @@ function renderDeliveryRows() {
     ? visibleRows.filter((row) => deliveryBrandingFilter === "all" || deliveryBrandingModes(row).includes(deliveryBrandingFilter))
     : visibleRows;
   const filtered = sortRows(brandingFilteredRows);
-  tbody.innerHTML = filtered.map((row) => {
-    const contactName = row.contact_name?.trim() || "";
-    const contactNumber = row.contact_number?.trim() || "";
-    const salespersonContact = `${escapeHtml(contactName || "—")}${contactName && contactNumber ? " · " : " "}${escapeHtml(contactNumber || "—")}`;
-    const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${profile.role === "salesperson"
-      ? salespersonContact
-      : row.contact_name || row.contact_number ? `${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}` : "—"}</span>`}`;
-    const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
-    const brandingCell = `<td>${escapeHtml(deliveryBrandingModes(row).join(", ") || "—")}</td>`;
-    const addressCell = `<td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td>`;
-    const soNumberCell = `<td>${deliverySoNumberCell(row)}</td>`;
-    const deliveryDateCell = `<td>${escapeHtml(row.delivery_date || "—")}${row.delivery_date ? `<br>${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}` : ""}</td>`;
-    const deliveryColumns = page === "production-store.html"
-      ? `<td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td>${itemsCell}<td>${escapeHtml(row.delivery_date || "—")}</td><td>${deliveryGoodsStatus(row)
-        ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
-        : "—"}</td>`
-      : page === "deliveries.html" && profile.role === "production"
-      ? `${deliveryDateCell}<td>${escapeHtml(row.client_name || "—")}</td>${addressCell}${soNumberCell}${itemsCell}${brandingCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
-        ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
-        : "—"}</td>`
-      : page === "deliveries.html" && profile.role === "salesperson"
-      ? `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td>${brandingCell}<td>${deliveryGoodsStatus(row)
-        ? `<span class="goods-status-pill delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>${row.goods_status_updated_at ? `<br><small>${escapeHtml(localDateTime(row.goods_status_updated_at))}</small>` : ""}`
-        : "—"}</td>`
-      : page === "deliveries.html"
-      ? `<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
-        ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
-        : "—"}</td>`
-      : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
-    const productionStatus = row.production_status || "—";
-    const productionCell = `<td>${productionStatus === "—" ? "—" : `<span class="delivery-status-${productionStatus === "Ready" ? "green" : "red"}">${escapeHtml(productionStatus)}</span>`}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>`;
-    const dispatchCell = `<td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}</td>`;
-    const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
-    const rowDataCells = page === "production-store.html" || page === "deliveries.html" && ["production", "salesperson"].includes(profile.role)
-      ? deliveryColumns
-      : `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}${deliveryColumns}`;
-    return `<tr data-entry-id="${escapeHtml(row.id)}">
-      ${rowDataCells}${productionCell}${dispatchCell}${actionsCell}</tr>`;
-  }).join("");
-  initializeScrollableTables(tbody.closest("table"));
-  dispatchValues.forEach((values, id) => {
-    const transport = tbody.querySelector(`[data-transport="${CSS.escape(id)}"]`);
-    const vehicle = tbody.querySelector(`[data-vehicle="${CSS.escape(id)}"]`);
-    if (transport) {
-      transport.value = values.transport;
-      vehicle?.classList.toggle("hidden", values.transport !== "Company");
+  if (changedIds === null) {
+    tbody.innerHTML = filtered.map(deliveryRowMarkup).join("");
+    bindDeliveryRowActions(tbody);
+  } else {
+    const visibleById = new Map(filtered.map((row) => [row.id, row]));
+    for (const id of changedIds) {
+      const current = tbody.querySelector(`[data-entry-id="${CSS.escape(id)}"]`);
+      const row = visibleById.get(id);
+      if (!row) {
+        current?.remove();
+        continue;
+      }
+      const template = document.createElement("tbody");
+      template.innerHTML = deliveryRowMarkup(row);
+      const replacement = template.firstElementChild;
+      current?.remove();
+      const index = filtered.findIndex((item) => item.id === id);
+      const next = filtered.slice(index + 1).map((item) =>
+        tbody.querySelector(`[data-entry-id="${CSS.escape(item.id)}"]`)).find(Boolean);
+      tbody.insertBefore(replacement, next || null);
+      initializeScrollableTableRow(replacement);
+      bindDeliveryRowActions(replacement);
     }
-    if (vehicle && [...vehicle.options].some((option) => option.value === values.vehicle)) vehicle.value = values.vehicle;
-  });
+  }
+  if (changedIds === null) initializeScrollableTables(tbody.closest("table"));
   const emptyState = document.querySelector("#delivery-empty");
   if (isDeliveryRoleChipMode() && !filtered.length) {
     emptyState.replaceChildren();
@@ -3993,10 +4086,7 @@ function renderDeliveryRows() {
   }
   emptyState.classList.toggle("hidden", filtered.length > 0);
   if (page === "deliveries.html") {
-    const countLabel = deliveryTotalCount === 1 ? "delivery" : "deliveries";
-    document.querySelector("#delivery-results-count").textContent = deliveryRows.length < deliveryTotalCount
-      ? `Showing ${deliveryRows.length} of ${deliveryTotalCount} ${countLabel}`
-      : `Showing ${deliveryRows.length} ${countLabel}`;
+    document.querySelector("#delivery-results-count").textContent = `Showing ${filtered.length} deliveries`;
     const activeFilters = [];
     const dateFrom = document.querySelector("#delivery-date-from").value;
     const dateTo = document.querySelector("#delivery-date-to").value;
@@ -4008,33 +4098,44 @@ function renderDeliveryRows() {
     if (salesperson.value) activeFilters.push(`Salesperson: ${salesperson.selectedOptions[0].textContent}`);
     if (production) activeFilters.push(`Production: ${production}`);
     if (dispatch.value) activeFilters.push(`Dispatch: ${dispatch.selectedOptions[0].textContent}`);
+    if (isDeliveryRoleChipMode()) {
+      const selectedPill = DELIVERY_ROLE_STATUS_LABELS[profile.role].find(({ value }) => value === deliveryRoleStatusFilter);
+      if (selectedPill && selectedPill.value !== "all") activeFilters.push(`Status: ${selectedPill.label}`);
+    }
+    if (!isDeliveryRoleChipMode() && deliveryUrgentFilter) activeFilters.push("Status: Urgent");
+    if (page === "deliveries.html" && profile.role === "production" && deliveryBrandingFilter !== "all") {
+      activeFilters.push(`Branding: ${deliveryBrandingFilter}`);
+    }
     if (search) activeFilters.push(`Search: ${search}`);
     document.querySelector("#delivery-active-filters").textContent = activeFilters.length
       ? `Active filters: ${activeFilters.join(" · ")}`
-      : "No status, date, or salesperson filters";
+      : "No active filters";
   }
   updateSortIndicators();
-  tbody.querySelectorAll("[data-delivery-ready]").forEach((button) => button.addEventListener("click", () =>
+}
+
+function bindDeliveryRowActions(root) {
+  root.querySelectorAll("[data-delivery-ready]").forEach((button) => button.addEventListener("click", () =>
     updateDelivery(button.dataset.deliveryReady, {
       production_status: "Ready",
       ...(profile.role === "admin" ? { ready_at: new Date().toISOString() } : {})
     }, button, "Delivery marked Ready.")));
-  tbody.querySelectorAll("[data-delivery-view]").forEach((button) => button.addEventListener("click", () => {
+  root.querySelectorAll("[data-delivery-view]").forEach((button) => button.addEventListener("click", () => {
     const row = deliveryRows.find((item) => item.id === button.dataset.deliveryView);
     if (row) void openDeliveryView(row, button);
   }));
-  tbody.querySelectorAll("[data-delivery-edit]").forEach((button) => button.addEventListener("click", () => {
+  root.querySelectorAll("[data-delivery-edit]").forEach((button) => button.addEventListener("click", () => {
     const row = deliveryRows.find((item) => item.id === button.dataset.deliveryEdit);
     if (row) openDeliveryEdit(row);
   }));
-  tbody.querySelectorAll("[data-production-edit]").forEach((button) => button.addEventListener("click", () => {
+  root.querySelectorAll("[data-production-edit]").forEach((button) => button.addEventListener("click", () => {
     const row = deliveryRows.find((item) => item.id === button.dataset.productionEdit);
     if (row) openProductionDeliveryEdit(row);
   }));
-  tbody.querySelectorAll("[data-delivery-delete]").forEach((button) => button.addEventListener("click", () => {
+  root.querySelectorAll("[data-delivery-delete]").forEach((button) => button.addEventListener("click", () => {
     void deleteDelivery(button);
   }));
-  tbody.querySelectorAll("[data-delivery-items]").forEach((cell) => {
+  root.querySelectorAll("[data-delivery-items]").forEach((cell) => {
     const open = () => {
       const row = deliveryRows.find((item) => item.id === cell.dataset.deliveryItems);
       if (row) openDeliveryItemsView(row, cell);
@@ -4047,8 +4148,8 @@ function renderDeliveryRows() {
       }
     });
   });
-  tbody.querySelectorAll("[data-transport]").forEach((select) => select.addEventListener("change", async () => {
-    const vehicle = tbody.querySelector(`[data-vehicle="${CSS.escape(select.dataset.transport)}"]`);
+  root.querySelectorAll("[data-transport]").forEach((select) => select.addEventListener("change", async () => {
+    const vehicle = root.querySelector(`[data-vehicle="${CSS.escape(select.dataset.transport)}"]`);
     vehicle?.classList.toggle("hidden", select.value !== "Company");
     if (vehicle && select.value !== "Company") vehicle.value = "";
     select.disabled = true;
@@ -4058,29 +4159,29 @@ function renderDeliveryRows() {
     }, null, "Transport saved.");
     if (select.isConnected) select.disabled = false;
   }));
-  tbody.querySelectorAll("[data-vehicle]").forEach((select) => select.addEventListener("change", async () => {
+  root.querySelectorAll("[data-vehicle]").forEach((select) => select.addEventListener("change", async () => {
     select.disabled = true;
     await updateDelivery(select.dataset.vehicle, {
       vehicle_id: select.value || null
     }, null, "Vehicle saved.");
     if (select.isConnected) select.disabled = false;
   }));
-  tbody.querySelectorAll("[data-delivery-date]").forEach((input) => input.addEventListener("input", () => {
-    const saveButton = tbody.querySelector(`[data-delivery-date-save="${CSS.escape(input.dataset.deliveryDate)}"]`);
+  root.querySelectorAll("[data-delivery-date]").forEach((input) => input.addEventListener("input", () => {
+    const saveButton = root.querySelector(`[data-delivery-date-save="${CSS.escape(input.dataset.deliveryDate)}"]`);
     if (saveButton) saveButton.disabled = input.value === input.dataset.currentDate;
   }));
-  tbody.querySelectorAll("[data-delivery-date-save]").forEach((button) => button.addEventListener("click", async () => {
-    const input = tbody.querySelector(`[data-delivery-date="${CSS.escape(button.dataset.deliveryDateSave)}"]`);
+  root.querySelectorAll("[data-delivery-date-save]").forEach((button) => button.addEventListener("click", async () => {
+    const input = root.querySelector(`[data-delivery-date="${CSS.escape(button.dataset.deliveryDateSave)}"]`);
     if (!input || input.value === input.dataset.currentDate) return;
     await updateDelivery(button.dataset.deliveryDateSave, {
       delivery_date: input.value || null
     }, button, "Delivery date saved.");
   }));
-  tbody.querySelectorAll("[data-delivery-dispatch]").forEach((button) => button.addEventListener("click", async () => {
+  root.querySelectorAll("[data-delivery-dispatch]").forEach((button) => button.addEventListener("click", async () => {
     const id = button.dataset.deliveryDispatch;
     await updateDelivery(id, { dispatched_at: new Date().toISOString() }, button, "Delivery packed.");
   }));
-  tbody.querySelectorAll("[data-delivery-delivered]").forEach((button) => button.addEventListener("click", () =>
+  root.querySelectorAll("[data-delivery-delivered]").forEach((button) => button.addEventListener("click", () =>
     updateDelivery(button.dataset.deliveryDelivered, {
       dispatch_status: "Delivered",
       ...(profile.role === "admin" ? { delivered_at: new Date().toISOString() } : {})
@@ -4102,10 +4203,10 @@ async function deleteDelivery(button) {
   } finally {
     setBusy(button, false);
   }
+  deliveryRowsVersion += 1;
   deliveryRows = deliveryRows.filter((delivery) => delivery.id !== id);
-  renderDeliveryRows();
+  renderDeliveryRows([id]);
   toast(`Delivery ${row.ref_no} deleted.`);
-  await loadDeliveries(true);
   document.querySelector("#delivery-period").dispatchEvent(new Event("change"));
 }
 
@@ -4117,10 +4218,10 @@ async function openDeliveryFromDeepLink(id) {
   };
   try {
     document.querySelector("#delivery-search").value = "";
+    deliveryUrgentFilter = false;
     if (page === "production-store.html") {
       document.querySelector("#production-salesperson-filter").value = "";
       productionGoodsFilter = "all";
-      await loadDeliveries(true);
     } else {
       document.querySelector("#delivery-date-from").value = "";
       document.querySelector("#delivery-date-to").value = "";
@@ -4131,8 +4232,8 @@ async function openDeliveryFromDeepLink(id) {
       if (statusFilter) statusFilter.value = "";
       if (isDeliveryRoleChipMode()) deliveryRoleStatusFilter = "all";
       saveDeliveryFilters();
-      await loadDeliveries(true);
     }
+    renderDeliveryRows();
 
     let row = deliveryRows.find((delivery) => delivery.id === id);
     if (!row) {
@@ -4246,7 +4347,11 @@ async function updateDelivery(id, values, button, success) {
     if (error) throw error;
     if (!data) throw new Error("This delivery could not be updated. Refresh and try again.");
     toast(success);
-    await loadDeliveries(true);
+    try {
+      await patchDeliveryRowsById([id]);
+    } catch (error) {
+      toast(`Updated, but the delivery list could not refresh: ${error.message || "unknown error"}`, "error");
+    }
   } catch (error) {
     toast(error.message || "Could not update this delivery.", "error");
   } finally {
@@ -4261,20 +4366,120 @@ async function refreshAssignedPendingDeliveries() {
     assignedPendingDeliveries = [];
     return;
   }
-  try {
-    const { data, error, count } = await client.from("deliveries").select(deliverySelect, { count: "exact" })
-      .eq("salesperson_id", profile.id).eq("handoff_status", "pending_details").order("created_at");
-    if (error) throw error;
-    assignedPendingDeliveries = data || [];
-    const pendingCount = count || assignedPendingDeliveries.length;
-    notice.textContent = pendingCount === 1
-      ? "1 production request is waiting for your details"
-      : `${pendingCount} production requests are waiting for your details`;
-    notice.classList.toggle("hidden", pendingCount === 0);
-    notice.setAttribute("aria-label", notice.textContent);
-  } catch (error) {
-    toast(error.message || "Could not load assigned production entries.", "error");
+  assignedPendingDeliveries = deliveryRows.filter((row) =>
+    (row.salesperson_id || row.created_by) === profile.id
+    && (row.handoff_status === "pending_details" || deliveryDetailsNeeded(row))
+    && row.dispatch_status !== "Delivered" && !row.delivered_at);
+  const pendingCount = assignedPendingDeliveries.length;
+  notice.textContent = pendingCount === 1
+    ? "1 production request is waiting for your details"
+    : `${pendingCount} production requests are waiting for your details`;
+  notice.classList.toggle("hidden", pendingCount === 0);
+  notice.setAttribute("aria-label", notice.textContent);
+}
+
+function deliveryPopupState(storageKey) {
+  const saved = sessionStorage.getItem(storageKey);
+  if (!saved) return {};
+  const state = JSON.parse(saved);
+  if (!state || typeof state !== "object" || Array.isArray(state)) {
+    throw new Error(`Invalid ${storageKey} session state.`);
   }
+  return state;
+}
+
+function deliveryWaitDuration(createdAt) {
+  const elapsed = Math.max(0, Date.now() - new Date(createdAt).getTime());
+  const days = Math.floor(elapsed / 86400000);
+  const hours = Math.floor((elapsed % 86400000) / 3600000);
+  if (days) return `${days}d ${hours}h`;
+  const minutes = Math.floor((elapsed % 3600000) / 60000);
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+async function refreshUrgentDeliveryAlerts() {
+  if (page !== "deliveries.html" || profile.role !== "salesperson") {
+    urgentDeliveryRows = [];
+    return;
+  }
+  try {
+    urgentDeliveryRows = deliveryRows.filter((row) =>
+      (row.salesperson_id || row.created_by) === profile.id && deliveryDetailsNeeded(row));
+    urgentDeliveryRows.sort((left, right) =>
+      Number(deliveryAddressUrgent(right)) - Number(deliveryAddressUrgent(left))
+      || new Date(left.created_at) - new Date(right.created_at));
+    const activeKeys = new Set(urgentDeliveryRows.map((row) =>
+      `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`));
+    deliveryPopupShownKeys.forEach((key) => {
+      if (!activeKeys.has(key)) deliveryPopupShownKeys.delete(key);
+    });
+    const snoozed = deliveryPopupState("deliveryDetailsPopupSnoozeById");
+    const now = Date.now();
+    const visibleRows = urgentDeliveryRows.filter((row) => {
+      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      return Number(snoozed[key] || 0) <= now;
+    });
+    const dialog = document.querySelector("#urgent-deliveries-dialog");
+    const list = document.querySelector("#urgent-deliveries-list");
+    list.innerHTML = visibleRows.map((row) => `<article class="urgent-delivery-item"${deliveryAddressUrgent(row) ? ' data-urgent="true"' : ""}>
+      <div><strong>${deliveryAddressUrgent(row) ? "URGENT · " : ""}${escapeHtml(row.client_name || "—")}</strong><span>SO ${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</span><span>Delivery ${escapeHtml(row.delivery_date || "—")}</span><span>Waiting ${escapeHtml(deliveryWaitDuration(row.created_at))}</span></div>
+      <button type="button" class="primary" data-fill-urgent-delivery="${escapeHtml(row.id)}">Fill now</button>
+    </article>`).join("");
+    if (!urgentDeliveryRows.length) {
+      if (dialog.open) dialog.close();
+      return;
+    }
+    const newlyVisible = visibleRows.filter((row) => {
+      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      return !deliveryPopupShownKeys.has(key);
+    });
+    const urgentVisible = visibleRows.filter(deliveryAddressUrgent);
+    const urgentReminderReady = urgentVisible.length > 0
+      && (!urgentPopupLastShownAt || now - urgentPopupLastShownAt >= 60 * 60 * 1000);
+    if (!newlyVisible.length && !urgentReminderReady) return;
+    newlyVisible.forEach((row) => {
+      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      deliveryPopupShownKeys.add(key);
+    });
+    if (urgentReminderReady) urgentPopupLastShownAt = now;
+    if (dialog.open) return;
+    dialog.showModal();
+  } catch (error) {
+    toast(error.message || "Could not update the details-needed reminder.", "error");
+  }
+}
+
+function bindUrgentDeliveryPopup() {
+  const dialog = document.querySelector("#urgent-deliveries-dialog");
+  if (!dialog || profile.role !== "salesperson") return;
+  dialog.querySelectorAll("[data-close-urgent-deliveries]").forEach((button) => {
+    button.addEventListener("click", () => dialog.close());
+  });
+  dialog.querySelector("[data-remind-urgent-deliveries]").addEventListener("click", () => {
+    dialog.close();
+    const snoozed = deliveryPopupState("deliveryDetailsPopupSnoozeById");
+    const snoozeUntil = Date.now() + 60 * 60 * 1000;
+    urgentDeliveryRows.forEach((row) => {
+      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      snoozed[key] = snoozeUntil;
+    });
+    sessionStorage.setItem("deliveryDetailsPopupSnoozeById", JSON.stringify(snoozed));
+    urgentDeliveryRows.forEach((row) => {
+      deliveryPopupShownKeys.delete(`${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`);
+    });
+    urgentPopupLastShownAt = Date.now();
+  });
+  dialog.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-fill-urgent-delivery]");
+    if (!button) return;
+    const row = urgentDeliveryRows.find((item) => item.id === button.dataset.fillUrgentDelivery);
+    if (!row || !canSalespersonEditDelivery(row)) {
+      toast("That request is no longer available for editing.", "error");
+      return;
+    }
+    dialog.close();
+    openDeliveryEdit(row);
+  });
 }
 
 function openFirstAssignedPendingDelivery() {
@@ -4342,21 +4547,16 @@ async function initDeliveries() {
   if (page === "deliveries.html") {
     configureDeliveryTableHeaders();
     document.querySelector("#delivery-handoff-notice").addEventListener("click", openFirstAssignedPendingDelivery);
+    bindUrgentDeliveryPopup();
     document.querySelector("[data-delivery-edit-cancel]").addEventListener("click", closeDeliveryEdit);
     document.querySelector("#delivery-edit-dialog").addEventListener("cancel", (event) => {
       event.preventDefault();
       closeDeliveryEdit();
     });
   }
-  await refreshAssignedPendingDeliveries();
   if (profile.role === "dispatch" || profile.role === "admin") await loadActiveVehicles();
-  if (page === "deliveries.html") await initializeDeliveryFilters();
   const searchInput = document.querySelector("#delivery-search");
-  searchInput.addEventListener("input", page === "production-store.html"
-    ? debounce(renderDeliveryRows, 200)
-    : debounce(() => { void loadDeliveries(true); }));
-  document.querySelector("#delivery-status-filter")?.addEventListener("change", () => { void loadDeliveries(true); });
-  document.querySelector("#delivery-more")?.addEventListener("click", () => { void loadDeliveries(false); });
+  searchInput.addEventListener("input", debounce(renderDeliveryRows, 200));
   if (page === "production-store.html") {
     const salespersonFilter = document.querySelector("#production-salesperson-filter");
     salespersonFilter.addEventListener("change", renderDeliveryRows);
@@ -4435,12 +4635,24 @@ async function initDeliveries() {
       { label: "Delivered", dateColumn: "delivered_at" }
     ];
   bindPeriodSummary("delivery-period", () => renderPeriodSummary("delivery-tallies", "delivery-period", deliveryReadTable(), deliveryCards));
-  await loadDeliveries(true);
+  await loadDeliveries();
+  await refreshAssignedPendingDeliveries();
+  await refreshUrgentDeliveryAlerts();
   client.channel(`deliveries-${profile.id}`).on("postgres_changes", {
     event: "*", schema: "public", table: "deliveries"
-  }, () => {
-    void loadDeliveries(true);
-    void refreshAssignedPendingDeliveries();
+  }, (event) => {
+    if (document.hidden) return;
+    const id = event.new?.id || event.old?.id;
+    if (!id) return;
+    deliveryRealtimeIds.add(id);
+    if (deliveryRealtimeTimer !== null) window.clearTimeout(deliveryRealtimeTimer);
+    deliveryRealtimeTimer = window.setTimeout(() => {
+      const ids = [...deliveryRealtimeIds];
+      deliveryRealtimeIds.clear();
+      deliveryRealtimeTimer = null;
+      void patchDeliveryRowsById(ids).catch((error) =>
+        toast(error.message || "Could not apply delivery updates.", "error"));
+    }, 250);
   }).subscribe();
   if (profile.role === "dispatch" || profile.role === "admin") {
     client.channel(`delivery-vehicles-${profile.id}`).on("postgres_changes", {
@@ -4451,8 +4663,7 @@ async function initDeliveries() {
     }).subscribe();
   }
   startVisibleRefresh(async () => {
-    await loadDeliveries(true);
-    await refreshAssignedPendingDeliveries();
+    await refreshDeliveryRows();
     if (profile.role === "dispatch" || profile.role === "admin") {
       await loadActiveVehicles();
       renderDeliveryRows();
@@ -4783,7 +4994,7 @@ async function loadRiderJobs(reset = true) {
       base = base.or(`ref_no.ilike.${term},client_name.ilike.${term}`);
     } else if (!routeAdmin && search) base = base.ilike("client_name", `%${search}%`);
     const { data, error, count } = await base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin })
-      .range(riderOffset, riderOffset + PAGE_SIZE - 1);
+      .range(riderOffset, riderOffset + RIDER_PAGE_SIZE - 1);
     if (error) throw error;
     const rows = data || [];
     if (token !== riderQueryToken) return;
@@ -4807,7 +5018,7 @@ async function loadRiderJobs(reset = true) {
     }
     document.querySelector("#route-more")?.classList.toggle("hidden", routeAdmin
       ? riderOffset >= routeRiderTotalCount
-      : rows.length < PAGE_SIZE);
+      : rows.length < RIDER_PAGE_SIZE);
   } catch (error) {
     toast(error.message || "Could not load rider requests.", "error");
   }
@@ -5017,7 +5228,7 @@ function renderRiderJobs() {
   }
   const loadMore = document.querySelector("#route-more");
   if (loadMore) loadMore.classList.toggle("hidden", !routeView || riderOffset >= routeRiderTotalCount);
-  document.querySelector("#sales-rider-more")?.classList.toggle("hidden", !showSalesView || riderJobRows.length < PAGE_SIZE);
+  document.querySelector("#sales-rider-more")?.classList.toggle("hidden", !showSalesView || riderJobRows.length < RIDER_PAGE_SIZE);
   const roots = [routeView ? document.querySelector("#route-rider-rows") : null,
     showSalesView ? document.querySelector("#sales-rider-rows") : null].filter(Boolean);
   roots.forEach((root) => {
@@ -5177,7 +5388,7 @@ function renderMyJobs() {
     <div class="table-actions">${profile.role === "rider" && row.status === "Started" ? `<button class="primary" data-rider-start="${escapeHtml(row.id)}" ${inProgress ? "disabled" : ""}>Start</button>` : ""}
       ${profile.role === "rider" && row.status === "In progress" ? `<button class="primary" data-rider-finish="${escapeHtml(row.id)}">Finish</button>` : ""}</div></article>`).join("");
   document.querySelector("#my-jobs-empty").classList.toggle("hidden", filtered.length > 0);
-  document.querySelector("#my-jobs-more")?.classList.toggle("hidden", riderJobRows.length < PAGE_SIZE);
+  document.querySelector("#my-jobs-more")?.classList.toggle("hidden", riderJobRows.length < RIDER_PAGE_SIZE);
   root.querySelectorAll("[data-rider-start]").forEach((button) => button.addEventListener("click", () =>
     updateRiderJob(button.dataset.riderStart, { status: "In progress" }, button, "Job started.")));
   root.querySelectorAll("[data-rider-finish]").forEach((button) => button.addEventListener("click", async () => {

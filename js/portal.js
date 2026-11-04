@@ -517,6 +517,8 @@ function notificationLabel(type) {
   return {
     delivery_new: "New delivery request",
     delivery_goods_status: "Production store request submitted or updated",
+    delivery_details_needed: "Delivery address needed",
+    delivery_address_urgent: "URGENT: delivery address missing",
     delivery_ready: "Delivery is ready to pack",
     delivery_dispatched: "Delivery packed",
     delivery_delivered: "Delivery completed",
