@@ -69,6 +69,8 @@ Deno.serve(async (request) => {
       const fullName = typeof body.full_name === "string" ? body.full_name.trim() : "";
       const password = typeof body.password === "string" ? body.password : "";
       const role = body.role;
+      const productionAccess = role === "production" || body.production_access === true;
+      const dispatchAccess = role === "dispatch" || body.dispatch_access === true;
       const routeAdminAccess = role === "route_admin" || body.route_admin_access === true;
       const productionStoreAccess = role === "production_store" || body.production_store_access === true;
       const riderRequestAccess = role === "user" || body.rider_request_access === true;
@@ -81,7 +83,9 @@ Deno.serve(async (request) => {
       if (!["salesperson", "designer", "admin", "production", "production_store", "dispatch", "route_admin", "rider", "user"].includes(role)) {
         return response({ error: "Choose a valid role." }, 400);
       }
-      if ((body.route_admin_access !== undefined && typeof body.route_admin_access !== "boolean")
+      if ((body.production_access !== undefined && typeof body.production_access !== "boolean")
+        || (body.dispatch_access !== undefined && typeof body.dispatch_access !== "boolean")
+        || (body.route_admin_access !== undefined && typeof body.route_admin_access !== "boolean")
         || (body.production_store_access !== undefined && typeof body.production_store_access !== "boolean")
         || (body.rider_request_access !== undefined && typeof body.rider_request_access !== "boolean")) {
         return response({ error: "Access flags must be true or false." }, 400);
@@ -94,6 +98,7 @@ Deno.serve(async (request) => {
       if (createError || !created.user) return response({ error: createError?.message || "Could not create user." }, 400);
       const { error: profileError } = await service.from("profiles").insert({
         id: created.user.id, username, full_name: fullName, role, active: true,
+        production_access: productionAccess, dispatch_access: dispatchAccess,
         route_admin_access: routeAdminAccess, production_store_access: productionStoreAccess,
         rider_request_access: riderRequestAccess,
         password_change_required: true

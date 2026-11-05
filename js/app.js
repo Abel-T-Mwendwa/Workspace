@@ -1,4 +1,4 @@
-import { canSeeStatusBoard, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
+import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
 import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./delivery-slots.js";
 import { bindEditorKeyboard } from "./dialog-keyboard.js";
 import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./rider-request-slots.js";
@@ -46,17 +46,11 @@ const STATUS_BOARD_STAGES = [
 const DELIVERY_ROLE_STATUS_LABELS = {
   production: [
     { value: "pending", label: "Pending", style: "pending" },
-    { value: "Not ready", label: "Not ready", style: "not-ready" },
     { value: "Ready", label: "Ready", style: "ready" },
     { value: "all", label: "All", style: "all" }
   ],
   dispatch: [
-    { value: "urgent", label: "Urgent", style: "urgent" },
     { value: "pending", label: "Pending", style: "pending" },
-    { value: "ready-for-delivery", label: "Ready for delivery", style: "ready" },
-    { value: "not-packed", label: "Not packed", style: "partial" },
-    { value: "packed", label: "Packed", style: "ready" },
-    { value: "Not delivered", label: "Not delivered", style: "partial" },
     { value: "Delivered", label: "Delivered", style: "ready" },
     { value: "all", label: "All", style: "all" }
   ]
@@ -866,7 +860,10 @@ function updateSortIndicators() {
     header.title = page === "deliveries.html" || page === "production-store.html" || page === "designer.html" && header.dataset.sort === "date_needed" ? "Click to sort" : "Double-click to sort";
     header.classList.add("sortable-header");
     const active = header.dataset.sort === activeSort.key;
-    header.textContent = `${label}${active ? (activeSort.direction === "asc" ? " ▲" : " ▼") : ""}`;
+    const indicator = document.createElement("span");
+    indicator.className = "sort-indicator";
+    indicator.textContent = `${label}${active ? (activeSort.direction === "asc" ? " ▲" : " ▼") : ""}`;
+    header.replaceChildren(indicator);
     header.setAttribute("aria-sort", active ? (activeSort.direction === "asc" ? "ascending" : "descending") : "none");
   });
 }
@@ -963,7 +960,7 @@ function bindPasswordHints(root) {
 }
 
 async function loadUsers() {
-  const { data, error } = await client.from("profiles").select("id,username,full_name,role,active,route_admin_access,production_store_access,rider_request_access,created_at").order("full_name");
+  const { data, error } = await client.from("profiles").select("id,username,full_name,role,active,production_access,dispatch_access,route_admin_access,production_store_access,rider_request_access,created_at").order("full_name");
   if (error) throw error;
   users = data || [];
   return users;
@@ -2100,6 +2097,8 @@ async function createUser(event) {
   try {
     const formData = new FormData(form);
     const values = Object.fromEntries(formData);
+    values.production_access = formData.has("production_access");
+    values.dispatch_access = formData.has("dispatch_access");
     values.route_admin_access = formData.has("route_admin_access");
     values.production_store_access = formData.has("production_store_access");
     values.rider_request_access = formData.has("rider_request_access");
@@ -2136,6 +2135,8 @@ function renderUsers() {
   document.querySelector("#users-empty").classList.toggle("hidden", filteredUsers.length > 0);
   document.querySelector("#user-rows").innerHTML = filteredUsers.map((user) => `<tr><td>${escapeHtml(user.full_name)}</td><td>${escapeHtml(user.username)}</td>
     <td><select data-role="${escapeHtml(user.id)}">${roleOptions.map((role) => `<option value="${escapeHtml(role.value)}"${user.role === role.value ? " selected" : ""}>${escapeHtml(role.label)}</option>`).join("")}</select></td>
+    <td><input type="checkbox" data-production-access="${escapeHtml(user.id)}" ${user.production_access || user.role === "production" ? "checked" : ""} ${user.role === "production" ? "disabled" : ""} aria-label="Production access for ${escapeHtml(user.full_name)}"></td>
+    <td><input type="checkbox" data-dispatch-access="${escapeHtml(user.id)}" ${user.dispatch_access || user.role === "dispatch" ? "checked" : ""} ${user.role === "dispatch" ? "disabled" : ""} aria-label="Dispatch access for ${escapeHtml(user.full_name)}"></td>
     <td><input type="checkbox" data-route-admin="${escapeHtml(user.id)}" ${user.route_admin_access || user.role === "route_admin" || user.role === "admin" ? "checked" : ""} ${user.role === "route_admin" || user.role === "admin" ? "disabled" : ""} aria-label="Route admin access for ${escapeHtml(user.full_name)}"></td>
     <td><input type="checkbox" data-production-store="${escapeHtml(user.id)}" ${user.production_store_access || user.role === "production_store" ? "checked" : ""} ${user.role === "production_store" ? "disabled" : ""} aria-label="Production store access for ${escapeHtml(user.full_name)}"></td>
     <td><input type="checkbox" data-rider-request="${escapeHtml(user.id)}" ${user.rider_request_access || user.role === "user" ? "checked" : ""} ${user.role === "user" ? "disabled" : ""} aria-label="Rider request access for ${escapeHtml(user.full_name)}"></td>
@@ -2144,6 +2145,10 @@ function renderUsers() {
     ${profile?.role === "admin" ? `<button class="danger" data-delete-user="${escapeHtml(user.id)}" ${user.id === profile.id || user.role === "admin" && users.filter((entry) => entry.role === "admin").length <= 1 ? "disabled" : ""}>Delete user</button>` : ""}</div></td></tr>`).join("");
   initializeScrollableTables(document.querySelector("#user-rows").closest("table"));
   document.querySelectorAll("[data-role]").forEach((select) => select.addEventListener("change", () => updateUser(select.dataset.role, { role: select.value }, select)));
+  document.querySelectorAll("[data-production-access]").forEach((input) => input.addEventListener("change", () =>
+    updateUser(input.dataset.productionAccess, { production_access: input.checked }, input)));
+  document.querySelectorAll("[data-dispatch-access]").forEach((input) => input.addEventListener("change", () =>
+    updateUser(input.dataset.dispatchAccess, { dispatch_access: input.checked }, input)));
   document.querySelectorAll("[data-route-admin]").forEach((input) => input.addEventListener("change", () =>
     updateUser(input.dataset.routeAdmin, { route_admin_access: input.checked }, input)));
   document.querySelectorAll("[data-production-store]").forEach((input) => input.addEventListener("change", () =>
@@ -2361,7 +2366,7 @@ function tableColumnWidth(header, index) {
   const label = header.textContent.trim().toLowerCase();
   if (index === 0 && /^(sr|#|no\.?)(\s*\/.*)?$/.test(label)) return 82;
   if (index === 0 && /^ref(\s+no\.?)?$/.test(label)) return 140;
-  if (/^(route admin access|production store access|rider request access|active)$/.test(label)) return 116;
+  if (/^(production access|dispatch access|route admin access|production store access|rider request access|active)$/.test(label)) return 116;
   if (/^(action|actions|manage)$/.test(label)) return 270;
   if (/(^| )status$/.test(label) || /^(production|dispatch|type|category)$/.test(label)) return 150;
   if (/(date|time|needed|requested|delivery|expected)$/.test(label)) return 156;
@@ -2372,7 +2377,17 @@ function tableColumnWidth(header, index) {
 }
 
 function initializeScrollableTableRow(row) {
-  const headers = row.closest("table").querySelectorAll("thead th");
+  const table = row.closest("table");
+  const headers = table.querySelectorAll("thead th");
+  if (table.classList.contains("delivery-page-table")) {
+    [...headers].forEach((header, index) => {
+      if (row.cells[index]) {
+        row.cells[index].removeAttribute("style");
+        row.cells[index].dataset.label = header.textContent.trim();
+      }
+    });
+    return;
+  }
   [...headers].forEach((header, index) => {
     if (header.style.width && row.cells[index]) row.cells[index].style.width = header.style.width;
   });
@@ -2382,6 +2397,20 @@ function initializeScrollableTables(root = document) {
   const tables = root instanceof HTMLTableElement ? [root] : [...root.querySelectorAll("table")];
   tables.forEach((table) => {
     table.classList.add("table-scroll-content");
+    const deliveryPageTable = table.id === "deliveries-table" && page === "deliveries.html";
+    if (deliveryPageTable) {
+      table.classList.add("delivery-page-table");
+      table.classList.toggle("delivery-salesperson-table", profile?.role === "salesperson");
+      table.closest(".table-wrap")?.classList.add("delivery-salesperson-table-wrap");
+      table.style.removeProperty("--table-scroll-width");
+      table.style.removeProperty("width");
+      table.style.removeProperty("min-width");
+      table.style.removeProperty("table-layout");
+      table.querySelectorAll("thead th").forEach((header) => header.removeAttribute("style"));
+      table.querySelectorAll("tr").forEach((row) => initializeScrollableTableRow(row));
+      initializeDeliveryStickyScrollbar();
+      return;
+    }
     const headers = [...table.querySelectorAll("thead th")];
     const widths = headers.map(tableColumnWidth);
     if (!widths.length) return;
@@ -2421,8 +2450,35 @@ function initializeScrollableTables(root = document) {
   tableRowSliderObserver.observe(document.body, { childList: true, subtree: true });
 }
 
+function initializeDeliveryStickyScrollbar() {
+  const scrollbar = document.querySelector("#delivery-table-sticky-scrollbar");
+  const wrapper = document.querySelector("#deliveries-table")?.closest(".table-wrap");
+  const table = document.querySelector("#deliveries-table");
+  const inner = scrollbar?.firstElementChild;
+  if (!scrollbar || !wrapper || !table || !inner) return;
+  const update = () => {
+    const rect = wrapper.getBoundingClientRect();
+    const hasOverflow = window.innerWidth >= 768 && table.scrollWidth > wrapper.clientWidth + 1;
+    scrollbar.style.display = hasOverflow ? "block" : "none";
+    scrollbar.style.left = `${rect.left}px`;
+    scrollbar.style.width = `${rect.width}px`;
+    inner.style.width = `${table.scrollWidth}px`;
+    if (scrollbar.scrollLeft !== wrapper.scrollLeft) scrollbar.scrollLeft = wrapper.scrollLeft;
+  };
+  if (scrollbar.dataset.bound !== "true") {
+    scrollbar.dataset.bound = "true";
+    scrollbar.addEventListener("scroll", () => {
+      if (wrapper.scrollLeft !== scrollbar.scrollLeft) wrapper.scrollLeft = scrollbar.scrollLeft;
+    }, { passive: true });
+    wrapper.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update, { passive: true });
+    window.addEventListener("scroll", update, { passive: true });
+  }
+  update();
+}
+
 function deliveryReadTable() {
-  return !isProductionStoreMode() && ["production", "dispatch"].includes(profile.role)
+  return !isProductionStoreMode() && (hasProductionAccess(profile) || hasDispatchAccess(profile))
     ? "deliveries_role_safe" : "deliveries";
 }
 
@@ -3286,10 +3342,6 @@ async function submitDelivery(event) {
     toast("Enter a contact number.", "error");
     return;
   }
-  if (!productionEntry && payload.delivery_date && payload.delivery_date < today) {
-    toast("Delivery date cannot be in the past.", "error");
-    return;
-  }
   if (!productionEntry && !payload.delivery_time
     || payload.delivery_time && payload.delivery_time !== "any" && (!hourlySlots().some((slot) => slot.start === payload.delivery_time)
       || payload.delivery_date === today && payload.delivery_time <= currentNairobiTime())) {
@@ -3608,7 +3660,8 @@ async function initializeDeliveryFilters() {
 
 async function fetchAllDeliveryRows() {
   const rows = [];
-  const select = profile.role === "salesperson" ? `${deliverySelect},goods_status_updated_at` : deliverySelect;
+  const select = profile.role === "salesperson" && !hasProductionAccess(profile) && !hasDispatchAccess(profile)
+    ? `${deliverySelect},goods_status_updated_at` : deliverySelect;
   for (let offset = 0; ; offset += 1000) {
     const { data, error } = await client.from(deliveryReadTable()).select(select)
       .order("sr", { ascending: false }).range(offset, offset + 999);
@@ -3724,33 +3777,33 @@ async function loadActiveVehicles() {
 
 function deliveryActions(row) {
   const role = profile.role;
+  const productionAccess = role === "admin" || hasProductionAccess(profile);
+  const dispatchAccess = role === "admin" || hasDispatchAccess(profile);
+  const isAssignedSalesperson = role !== "admin" && row.salesperson_id === profile.id;
   if (row.dispatch_status === "Delivered") return "";
-  if ((role === "production" || role === "admin") && row.production_status !== "Ready") {
+  const actions = [];
+  if (productionAccess && row.production_status !== "Ready" && !isAssignedSalesperson) {
     const goodsReady = ["ready", "partial"].includes(deliveryGoodsStatus(row));
-    return `<button class="primary" data-delivery-ready="${escapeHtml(row.id)}"${goodsReady ? "" : " disabled"}>Ready</button>`;
+    actions.push(`<button class="primary" data-delivery-ready="${escapeHtml(row.id)}"${goodsReady ? "" : " disabled"}>Ready</button>`);
   }
-  if (row.handoff_status === "pending_details" && role !== "dispatch") return "";
-  if (role === "dispatch" || role === "admin") {
-    if (row.production_status !== "Ready") return "";
-    if (!row.dispatched_at) return `<button class="primary" data-delivery-dispatch="${escapeHtml(row.id)}">Packed</button>`;
-    const vehicleOptions = vehicleRows.map((vehicle) =>
-      `<option value="${escapeHtml(vehicle.id)}"${row.vehicle_id === vehicle.id ? " selected" : ""}>${escapeHtml(vehicle.registration_number)} · ${escapeHtml(vehicle.description)}</option>`
-    ).join("");
-    const dateControl = role === "dispatch" ? `<label class="dispatch-date-control">Delivery date
-      <input type="date" data-delivery-date="${escapeHtml(row.id)}" data-current-date="${escapeHtml(row.delivery_date || "")}" value="${escapeHtml(row.delivery_date || "")}">
-    </label><button class="secondary" data-delivery-date-save="${escapeHtml(row.id)}" disabled>Save date</button>` : "";
-    const canDeliver = Boolean(row.delivery_date && deliveryAddress(row).trim()
-      && row.transport && (row.transport !== "Company" || row.vehicle_id));
-    return `<div class="dispatch-controls">
-      ${dateControl}
-      <select data-transport="${escapeHtml(row.id)}" aria-label="Transport"><option value="">Choose transport</option><option${row.transport === "Client" ? " selected" : ""}>Client</option><option${row.transport === "Company" ? " selected" : ""}>Company</option></select>
-      <select data-vehicle="${escapeHtml(row.id)}" aria-label="Vehicle" class="${row.transport === "Company" ? "" : "hidden"}"><option value="">Choose vehicle…</option>${vehicleOptions}</select>
-      ${role === "dispatch"
-        ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}"${canDeliver ? "" : ' disabled title="Set a delivery date, item address, and transport first."'}>Delivered</button>`
-        : row.transport && (row.transport !== "Company" || row.vehicle_id) ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}">Delivered</button>` : ""}
-    </div>`;
+  if (dispatchAccess && row.production_status === "Ready") {
+    if (!row.dispatched_at && !isAssignedSalesperson) {
+      actions.push(`<button class="primary" data-delivery-dispatch="${escapeHtml(row.id)}">Packed</button>`);
+    } else if (row.dispatched_at) {
+      const vehicleOptions = vehicleRows.map((vehicle) =>
+        `<option value="${escapeHtml(vehicle.id)}"${row.vehicle_id === vehicle.id ? " selected" : ""}>${escapeHtml(vehicle.registration_number)} · ${escapeHtml(vehicle.description)}</option>`
+      ).join("");
+      const canDeliver = Boolean(row.transport && (row.transport !== "Company" || row.vehicle_id));
+      actions.push(`<div class="dispatch-controls">
+        <select data-transport="${escapeHtml(row.id)}" aria-label="Transport"><option value="">Choose transport</option><option${row.transport === "Client" ? " selected" : ""}>Client</option><option${row.transport === "Company" ? " selected" : ""}>Company</option></select>
+        <select data-vehicle="${escapeHtml(row.id)}" aria-label="Vehicle" class="${row.transport === "Company" ? "" : "hidden"}"><option value="">Choose vehicle…</option>${vehicleOptions}</select>
+        ${hasDispatchAccess(profile)
+          ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}"${canDeliver ? "" : ' disabled title="Choose transport and an active vehicle when using Company transport."'}>Delivered</button>`
+          : row.transport && (row.transport !== "Company" || row.vehicle_id) ? `<button class="secondary" data-delivery-delivered="${escapeHtml(row.id)}">Delivered</button>` : ""}
+      </div>`);
+    }
   }
-  return "";
+  return actions.join("");
 }
 
 function renderProductionGoodsChips(rows) {
@@ -3809,34 +3862,39 @@ function renderStatusChipButtons(root, chips, counts, selected, onSelect, dataNa
 }
 
 function isDeliveryRoleChipMode() {
-  return page === "deliveries.html" && ["production", "dispatch"].includes(profile.role);
+  return page === "deliveries.html" && (hasProductionAccess(profile) || hasDispatchAccess(profile));
 }
 
 function showsDeliveryUrgentPill() {
-  return page === "deliveries.html" && ["salesperson", "dispatch", "admin"].includes(profile.role);
+  return page === "deliveries.html"
+    && (profile.role === "salesperson" || profile.role === "admin");
+}
+
+function deliveryOperationalRole() {
+  if (hasDispatchAccess(profile)) return "dispatch";
+  if (hasProductionAccess(profile)) return "production";
+  return profile.role;
 }
 
 function deliveryRoleStatusMatches(row, value) {
   if (value === "all") return true;
   if (value === "urgent") return deliveryAddressUrgent(row);
-  if (profile.role === "production") {
+  if (!hasDispatchAccess(profile)) {
     if (value === "pending") return row.production_status === "Not ready";
     return row.production_status === value;
   }
-  if (value === "pending" || value === "not-packed") {
-    const notPacked = row.production_status === "Ready" && row.dispatch_status === "Not delivered" && !row.dispatched_at;
-    return value === "pending" ? notPacked : row.dispatch_status === "Not delivered" && !row.dispatched_at;
-  }
-  if (value === "ready-for-delivery" || value === "packed") {
-    return row.dispatch_status === "Not delivered" && Boolean(row.dispatched_at);
-  }
-  if (value === "Not delivered") return row.dispatch_status === "Not delivered" && Boolean(row.dispatched_at);
+  if (value === "pending") return row.dispatch_status === "Not delivered";
   return row.dispatch_status === value;
 }
 
+function deliveryRoleStatusLabels() {
+  const role = deliveryOperationalRole();
+  return [...(DELIVERY_ROLE_STATUS_LABELS[role]
+    || DELIVERY_ROLE_STATUS_LABELS.dispatch.filter(({ value }) => value === "urgent"))];
+}
+
 function deliveryRoleStatusPills(rows) {
-  const labels = DELIVERY_ROLE_STATUS_LABELS[profile.role]
-    || DELIVERY_ROLE_STATUS_LABELS.dispatch.filter(({ value }) => value === "urgent");
+  const labels = deliveryRoleStatusLabels();
   const chips = labels.map((chip) =>
     chip.value === "urgent" && !rows.some(deliveryAddressUrgent)
       ? { ...chip, style: "grey" }
@@ -3882,9 +3940,9 @@ function deliveryBrandingPills(rows) {
 
 function configureDeliveryTableHeaders() {
   const header = document.querySelector("#delivery-table-head");
-  if (profile.role === "production") {
+  if (deliveryOperationalRole() === "production") {
     header.innerHTML = '<th data-sort="delivery_schedule">Delivery date</th><th>Client name</th><th>Delivery address</th><th>SO number</th><th>Items</th><th>Branding</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th>';
-  } else if (profile.role === "salesperson") {
+  } else if (profile.role === "salesperson" && !isDeliveryRoleChipMode()) {
     header.innerHTML = '<th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery date</th><th>Client/contact</th><th>Delivery address</th><th>SO number</th><th>Items</th><th>Salesperson</th><th>Branding</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th>';
   }
 }
@@ -3927,7 +3985,7 @@ function deliveryRowMarkup(row) {
   const contactNumber = row.contact_number?.trim() || "";
   const salespersonContact = `${escapeHtml(contactName || "—")}${contactName && contactNumber ? " · " : " "}${escapeHtml(contactNumber || "—")}`;
   const contactDetails = [contactName, contactNumber].filter(Boolean).map(escapeHtml).join(" · ") || "—";
-  const clientContact = `${escapeHtml(row.client_name || "—")}${["production", "dispatch"].includes(profile.role) ? "" : `<br><span class="muted">${profile.role === "salesperson"
+  const clientContact = `${escapeHtml(row.client_name || "—")}${hasProductionAccess(profile) || hasDispatchAccess(profile) ? "" : `<br><span class="muted">${profile.role === "salesperson"
     ? salespersonContact
     : contactDetails}</span>`}`;
   const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
@@ -3935,34 +3993,35 @@ function deliveryRowMarkup(row) {
   const addressCell = `<td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td>`;
   const soNumberCell = `<td>${deliverySoNumberCell(row)}</td>`;
   const deliveryDateCell = `<td>${escapeHtml(row.delivery_date || "—")}${row.delivery_date ? `<br>${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}` : ""}</td>`;
+  const groupedDeliveryDate = `<small class="delivery-secondary"><span class="delivery-date-value">${escapeHtml(row.delivery_date || "—")}</span>${row.delivery_date ? `<br><span class="delivery-time-value">${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}</span>` : ""}</small>`;
+  const groupedClientContact = `${clientContact}<br><small class="delivery-secondary">${escapeHtml(deliveryAddress(row) || "—")}</small><br><small class="delivery-secondary">${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</small>`;
   const deliveryColumns = page === "production-store.html"
     ? `<td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td>${itemsCell}<td>${escapeHtml(row.delivery_date || "—")}</td><td>${deliveryGoodsStatus(row)
       ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
       : "—"}</td>`
-    : page === "deliveries.html" && profile.role === "production"
-    ? `${deliveryDateCell}<td>${escapeHtml(row.client_name || "—")}</td>${addressCell}${soNumberCell}${itemsCell}${brandingCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
+    : page === "deliveries.html" && deliveryOperationalRole() === "production"
+    ? `${deliveryDateCell}<td>${groupedClientContact}</td>${addressCell}${soNumberCell}${itemsCell}${brandingCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
       ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
       : "—"}</td>`
-    : page === "deliveries.html" && profile.role === "salesperson"
-    ? `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td>${brandingCell}<td>${deliveryGoodsStatus(row)
+    : page === "deliveries.html" && profile.role === "salesperson" && !isDeliveryRoleChipMode()
+    ? `<td>${escapeHtml(row.sr)}${groupedDeliveryDate}</td>${deliveryDateCell}<td>${groupedClientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td>${brandingCell}<td>${deliveryGoodsStatus(row)
       ? `<span class="goods-status-pill delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>${row.goods_status_updated_at ? `<br><small>${escapeHtml(localDateTime(row.goods_status_updated_at))}</small>` : ""}`
       : "—"}</td>`
     : page === "deliveries.html"
-    ? `<td>${clientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
+    ? `<td>${groupedClientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
       ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
       : "—"}</td>`
     : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
   const productionStatus = row.production_status || "—";
   const productionCell = `<td>${productionStatus === "—" ? "—" : `<span class="delivery-status-${productionStatus === "Ready" ? "green" : "red"}">${escapeHtml(productionStatus)}</span>`}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>`;
   const urgent = deliveryAddressUrgent(row);
-  const missingAddressMarker = profile.role === "dispatch" && deliveryDetailsNeeded(row)
-    ? '<br><small class="delivery-address-missing">Address missing, cannot be delivered yet</small>'
-    : profile.role === "salesperson" && urgent
+  const missingAddressMarker = profile.role === "salesperson" && urgent
       ? '<br><small class="delivery-address-urgent">URGENT: address missing</small>'
       : "";
   const dispatchCell = `<td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}${missingAddressMarker}</td>`;
-  const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
-  const rowDataCells = page === "production-store.html" || page === "deliveries.html" && ["production", "salesperson"].includes(profile.role)
+  const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || hasProductionAccess(profile) || hasDispatchAccess(profile) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
+  const rowDataCells = page === "production-store.html" || page === "deliveries.html"
+    && (deliveryOperationalRole() === "production" || profile.role === "salesperson" && !isDeliveryRoleChipMode())
     ? deliveryColumns
     : `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}${deliveryColumns}`;
   return `<tr data-entry-id="${escapeHtml(row.id)}"${profile.role === "salesperson" && urgent ? ' class="delivery-address-urgent-row"' : ""}>${rowDataCells}${productionCell}${dispatchCell}${actionsCell}</tr>`;
@@ -3972,7 +4031,6 @@ function renderDeliveryRows(changedIds = null) {
   const tbody = document.querySelector("#delivery-rows");
   const matchingRows = deliveryRows.filter(deliveryMatchesBaseFilters);
   if (page === "production-store.html") renderProductionGoodsChips(matchingRows);
-  if (showsDeliveryUrgentPill()) deliveryRoleStatusPills(matchingRows);
   const visibleRows = isDeliveryRoleChipMode()
     ? matchingRows.filter((row) => deliveryRoleStatusMatches(row, deliveryRoleStatusFilter))
     : page === "production-store.html"
@@ -3986,17 +4044,21 @@ function renderDeliveryRows(changedIds = null) {
     ? matchingRows.filter(deliveryAddressUrgent)
     : matchingRows;
   const brandingFilterRow = document.querySelector("#delivery-branding-filter-row");
-  if (page === "deliveries.html" && profile.role === "production") {
-    brandingFilterRow?.classList.remove("hidden");
-    const statusPillRows = matchingRows.filter((row) => deliveryBrandingFilter === "all"
-      || deliveryBrandingModes(row).includes(deliveryBrandingFilter));
-    const brandingPillRows = matchingRows.filter((row) => deliveryRoleStatusMatches(row, deliveryRoleStatusFilter));
+  const showBrandingFilter = page === "deliveries.html" && hasProductionAccess(profile);
+  if (showsDeliveryUrgentPill() || isDeliveryRoleChipMode()) {
+    const statusPillRows = showBrandingFilter
+      ? matchingRows.filter((row) => deliveryBrandingFilter === "all"
+        || deliveryBrandingModes(row).includes(deliveryBrandingFilter))
+      : matchingRows;
     deliveryRoleStatusPills(statusPillRows);
-    deliveryBrandingPills(brandingPillRows);
+  }
+  if (showBrandingFilter) {
+    brandingFilterRow?.classList.remove("hidden");
+    deliveryBrandingPills(visibleRows);
   } else {
     brandingFilterRow?.classList.add("hidden");
   }
-  const brandingFilteredRows = page === "deliveries.html" && profile.role === "production"
+  const brandingFilteredRows = showBrandingFilter
     ? visibleRows.filter((row) => deliveryBrandingFilter === "all" || deliveryBrandingModes(row).includes(deliveryBrandingFilter))
     : visibleRows;
   const filtered = sortRows(brandingFilteredRows);
@@ -4028,7 +4090,7 @@ function renderDeliveryRows(changedIds = null) {
   const emptyState = document.querySelector("#delivery-empty");
   if (isDeliveryRoleChipMode() && !filtered.length) {
     emptyState.replaceChildren();
-    const options = DELIVERY_ROLE_STATUS_LABELS[profile.role];
+    const options = deliveryRoleStatusLabels();
     if (!matchingRows.length) {
       emptyState.textContent = "No matching deliveries";
     } else {
@@ -4096,14 +4158,16 @@ function renderDeliveryRows(changedIds = null) {
     const search = document.querySelector("#delivery-search").value.trim();
     if (dateFrom || dateTo) activeFilters.push(`Delivery date: ${dateFrom || "any"}–${dateTo || "any"}`);
     if (salesperson.value) activeFilters.push(`Salesperson: ${salesperson.selectedOptions[0].textContent}`);
-    if (production) activeFilters.push(`Production: ${production}`);
-    if (dispatch.value) activeFilters.push(`Dispatch: ${dispatch.selectedOptions[0].textContent}`);
+    if (!isDeliveryRoleChipMode()) {
+      if (production) activeFilters.push(`Production: ${production}`);
+      if (dispatch.value) activeFilters.push(`Dispatch: ${dispatch.selectedOptions[0].textContent}`);
+    }
     if (isDeliveryRoleChipMode()) {
-      const selectedPill = DELIVERY_ROLE_STATUS_LABELS[profile.role].find(({ value }) => value === deliveryRoleStatusFilter);
+      const selectedPill = deliveryRoleStatusLabels().find(({ value }) => value === deliveryRoleStatusFilter);
       if (selectedPill && selectedPill.value !== "all") activeFilters.push(`Status: ${selectedPill.label}`);
     }
     if (!isDeliveryRoleChipMode() && deliveryUrgentFilter) activeFilters.push("Status: Urgent");
-    if (page === "deliveries.html" && profile.role === "production" && deliveryBrandingFilter !== "all") {
+    if (showBrandingFilter && deliveryBrandingFilter !== "all") {
       activeFilters.push(`Branding: ${deliveryBrandingFilter}`);
     }
     if (search) activeFilters.push(`Search: ${search}`);
@@ -4165,17 +4229,6 @@ function bindDeliveryRowActions(root) {
       vehicle_id: select.value || null
     }, null, "Vehicle saved.");
     if (select.isConnected) select.disabled = false;
-  }));
-  root.querySelectorAll("[data-delivery-date]").forEach((input) => input.addEventListener("input", () => {
-    const saveButton = root.querySelector(`[data-delivery-date-save="${CSS.escape(input.dataset.deliveryDate)}"]`);
-    if (saveButton) saveButton.disabled = input.value === input.dataset.currentDate;
-  }));
-  root.querySelectorAll("[data-delivery-date-save]").forEach((button) => button.addEventListener("click", async () => {
-    const input = root.querySelector(`[data-delivery-date="${CSS.escape(button.dataset.deliveryDateSave)}"]`);
-    if (!input || input.value === input.dataset.currentDate) return;
-    await updateDelivery(button.dataset.deliveryDateSave, {
-      delivery_date: input.value || null
-    }, button, "Delivery date saved.");
   }));
   root.querySelectorAll("[data-delivery-dispatch]").forEach((button) => button.addEventListener("click", async () => {
     const id = button.dataset.deliveryDispatch;
@@ -4313,7 +4366,7 @@ async function openDeliveryView(row, trigger) {
     <div><dt>Time requested</dt><dd>${escapeHtml(localDateTime(row.created_at))}</dd></div>
     <div><dt>Client</dt><dd>${escapeHtml(row.client_name)}</dd></div>
     <div><dt>Delivery address</dt><dd>${escapeHtml(addresses || "—")}</dd></div>
-    ${["production", "dispatch"].includes(profile.role) ? "" : `<div><dt>Contact name</dt><dd>${escapeHtml(row.contact_name)}</dd></div>
+    ${hasProductionAccess(profile) || hasDispatchAccess(profile) ? "" : `<div><dt>Contact name</dt><dd>${escapeHtml(row.contact_name)}</dd></div>
     <div><dt>Contact number</dt><dd>${escapeHtml(row.contact_number)}</dd></div>`}
     <div><dt>Delivery date and time</dt><dd>${escapeHtml(row.delivery_date || "—")} · ${escapeHtml(row.delivery_time_any || !row.delivery_time ? "Any time" : deliverySlotLabel(row.delivery_time))}</dd></div>
     <div><dt>Mode of branding</dt><dd>${escapeHtml(deliveryBrandingModes(row).join(", ") || "—")}</dd></div>
@@ -4507,8 +4560,7 @@ async function initDeliveries() {
     document.querySelector("#delivery-salesperson-field")?.classList.toggle("hidden", !productionEntry);
     configureDeliveryForm(form, productionEntry);
     if (productionEntry) await loadDeliverySalespeople();
-    if (productionEntry) form.elements.delivery_date.removeAttribute("min");
-    else form.elements.delivery_date.min = today;
+    form.elements.delivery_date.removeAttribute("min");
     updateDeliverySlotOptions();
     form.elements.delivery_date.addEventListener("change", updateDeliverySlotOptions);
     document.querySelector("#delivery-form-toggle").addEventListener("click", () => {
@@ -4554,7 +4606,7 @@ async function initDeliveries() {
       closeDeliveryEdit();
     });
   }
-  if (profile.role === "dispatch" || profile.role === "admin") await loadActiveVehicles();
+  if (hasDispatchAccess(profile) || profile.role === "admin") await loadActiveVehicles();
   const searchInput = document.querySelector("#delivery-search");
   searchInput.addEventListener("input", debounce(renderDeliveryRows, 200));
   if (page === "production-store.html") {
@@ -4620,7 +4672,7 @@ async function initDeliveries() {
     if (event.target === event.currentTarget) closeDeliveryItems(true);
   });
   bindSortableHeaders();
-  const deliveryCards = ["production", "dispatch"].includes(profile.role)
+  const deliveryCards = hasProductionAccess(profile) || hasDispatchAccess(profile)
     ? [
       { label: "Received", dateColumn: "created_at" },
       { label: "Marked ready", dateColumn: "ready_at" },
@@ -4654,7 +4706,7 @@ async function initDeliveries() {
         toast(error.message || "Could not apply delivery updates.", "error"));
     }, 250);
   }).subscribe();
-  if (profile.role === "dispatch" || profile.role === "admin") {
+  if (hasDispatchAccess(profile) || profile.role === "admin") {
     client.channel(`delivery-vehicles-${profile.id}`).on("postgres_changes", {
       event: "*", schema: "public", table: "vehicles"
     }, async () => {
@@ -4664,7 +4716,7 @@ async function initDeliveries() {
   }
   startVisibleRefresh(async () => {
     await refreshDeliveryRows();
-    if (profile.role === "dispatch" || profile.role === "admin") {
+    if (hasDispatchAccess(profile) || profile.role === "admin") {
       await loadActiveVehicles();
       renderDeliveryRows();
     }

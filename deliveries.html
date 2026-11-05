@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="application-name" content="Workspace"><title>Deliveries | Promo Kings Workspace</title><link rel="icon" href="images/promo-kings-logo.svg"><link rel="stylesheet" href="css/styles.css"><link rel="stylesheet" href="css/polish.css"></head>
 <body>
   <header id="app-header" class="topbar"></header>
-  <main class="page">
+  <main class="page deliveries-page">
     <div class="page-heading"><div><p class="eyebrow">DELIVERY WORKSPACE</p><h1>Deliveries</h1><p class="muted">Request, prepare and dispatch deliveries.</p></div></div>
     <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="delivery-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="delivery-tallies" class="stats-grid"></div></section>
     <button type="button" class="notice hidden" id="delivery-handoff-notice"></button>
@@ -22,7 +22,7 @@
         <div class="form-actions wide"><button type="reset" class="quiet">Clear</button><button type="submit" class="primary">Request</button></div>
       </form>
     </section>
-    <section class="panel">
+    <section class="panel" id="delivery-requests-card">
       <div class="section-heading"><h2>Delivery requests</h2></div>
       <div class="toolbar"><input id="delivery-search" placeholder="Search SO number or client"></div>
       <div id="delivery-role-status-chips" class="production-goods-chips hidden" role="group" aria-label="Filter by delivery status"></div>
@@ -38,7 +38,8 @@
         <div class="delivery-filter-actions"><button type="button" class="secondary" id="delivery-clear-filters">Clear filters</button><button type="button" class="quiet" id="delivery-reset-filters">Reset to default</button></div>
       </div>
       <p class="delivery-filter-summary"><span id="delivery-results-count">Showing 0 deliveries</span><span id="delivery-active-filters"></span></p>
-      <div class="table-wrap"><table><thead><tr id="delivery-table-head"><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th>Client / Contact</th><th>Delivery address</th><th>SO number(s)</th><th>Items</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <div class="table-wrap"><table id="deliveries-table"><thead><tr id="delivery-table-head"><th data-sort="sr">SR</th><th data-sort="delivery_schedule">Delivery</th><th>Client / Contact</th><th>Delivery address</th><th>SO number(s)</th><th>Items</th><th>Salesperson</th><th>Goods status</th><th>Production</th><th>Dispatch</th><th>Actions</th></tr></thead><tbody id="delivery-rows"></tbody></table></div>
+      <div id="delivery-table-sticky-scrollbar" aria-hidden="true"><div></div></div>
       <p id="delivery-empty" class="empty-state hidden">No deliveries match these filters.</p>
     </section>
   </main>

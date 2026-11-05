@@ -55,6 +55,14 @@ export function hasProductionStoreAccess(profile) {
   return profile.role === "production_store" || profile.production_store_access === true;
 }
 
+export function hasProductionAccess(profile) {
+  return profile.role !== "admin" && (profile.role === "production" || profile.production_access === true);
+}
+
+export function hasDispatchAccess(profile) {
+  return profile.role !== "admin" && (profile.role === "dispatch" || profile.dispatch_access === true);
+}
+
 export function hasRiderRequestAccess(profile) {
   return profile.role === "user" || profile.role === "salesperson" || profile.rider_request_access === true;
 }
@@ -66,9 +74,12 @@ export function canSeeStatusBoard(profile) {
 function pageAllowed(page, profile) {
   const { role } = profile;
   if (page === "status-board.html") return canSeeStatusBoard(profile);
-  if (role === "user") return page === "riders.html";
+  if (role === "user" && !hasProductionAccess(profile) && !hasDispatchAccess(profile)) return page === "riders.html";
   if (page === "production-store.html") return hasProductionStoreAccess(profile);
   if (role === "admin") return page !== "my-jobs.html";
+  if (page === "home.html" && (hasProductionAccess(profile) || hasDispatchAccess(profile))) return true;
+  if (page === "deliveries.html" && (hasProductionAccess(profile) || hasDispatchAccess(profile))) return true;
+  if (page === "vehicles.html" && hasDispatchAccess(profile)) return true;
   const rolePages = {
     salesperson: ["home.html", "sales.html", "deliveries.html", "riders.html"],
     designer: ["home.html", "designer.html"],
@@ -98,6 +109,17 @@ export async function initPortal(client, profile, page, toast) {
   if (!header) return;
 
   const tabs = [...(NAV[profile.role] || [])];
+  if ((hasProductionAccess(profile) || hasDispatchAccess(profile))
+    && !tabs.some(([, href]) => href === "home.html")) {
+    tabs.unshift(["Home", "home.html"]);
+  }
+  if ((hasProductionAccess(profile) || hasDispatchAccess(profile))
+    && !tabs.some(([, href]) => href === "deliveries.html")) {
+    tabs.push(["Deliveries", "deliveries.html"]);
+  }
+  if (hasDispatchAccess(profile) && !tabs.some(([, href]) => href === "vehicles.html")) {
+    tabs.push(["Vehicles", "vehicles.html"]);
+  }
   if (hasProductionStoreAccess(profile) && !tabs.some(([, href]) => href === "production-store.html")) {
     tabs.push(["Production store", "production-store.html"]);
   }
@@ -136,7 +158,7 @@ export async function initPortal(client, profile, page, toast) {
 }
 
 function setupHomeLive(client, profile, toast) {
-  const categories = [...(HOME_CATEGORIES[profile.role] || [])];
+  const categories = homeCategoriesForProfile(profile);
   if (hasRouteAdminAccess(profile) && !categories.includes("Riders")) categories.push("Riders");
   const tables = [...new Set(categories.map((category) => HOME_CONFIG[category].table))];
   let refreshing = false;
@@ -209,7 +231,8 @@ function ensurePortalDialogs() {
 
 async function queryHomeRows(client, profile, category) {
   const config = HOME_CONFIG[category];
-  const table = category === "Deliveries" && ["production", "dispatch", "production_store"].includes(profile.role)
+  const table = category === "Deliveries"
+    && (hasProductionAccess(profile) || hasDispatchAccess(profile) || hasProductionStoreAccess(profile))
     ? "deliveries_role_safe" : config.table;
   let query = client.from(table).select(config.select);
   if (category === "My jobs") query = query.eq("assigned_rider", profile.id);
@@ -253,7 +276,10 @@ function homeDateMatch(row, category, filter) {
 
 function homeTabHref(category, profile) {
   if (category === "Artworks") return profile.role === "designer" ? "designer.html" : profile.role === "admin" ? "admin.html" : "sales.html";
-  if (category === "Deliveries") return profile.role === "production_store" ? "production-store.html" : "deliveries.html";
+  if (category === "Deliveries") {
+    return profile.role === "production_store" && !hasProductionAccess(profile) && !hasDispatchAccess(profile)
+      ? "production-store.html" : "deliveries.html";
+  }
   if (category === "Vehicles") return "vehicles.html";
   if (category === "My jobs") return "my-jobs.html";
   if (category === "Riders" && ["admin", "route_admin"].includes(profile.role)) return "route-admin.html";
@@ -292,7 +318,7 @@ function renderHomeRow(section, category, rows, profile) {
 async function renderHome(client, profile, toast) {
   const root = document.querySelector("#home-rows");
   root.replaceChildren();
-  const categories = [...(HOME_CATEGORIES[profile.role] || [])];
+  const categories = homeCategoriesForProfile(profile);
   if (hasRouteAdminAccess(profile) && !categories.includes("Riders")) categories.push("Riders");
   for (const category of categories) {
     const section = document.createElement("section");
@@ -306,6 +332,15 @@ async function renderHome(client, profile, toast) {
       toast(error.message || `Could not load ${category}.`, "error");
     }
   }
+}
+
+function homeCategoriesForProfile(profile) {
+  const categories = [...(HOME_CATEGORIES[profile.role] || [])];
+  if ((hasProductionAccess(profile) || hasDispatchAccess(profile)) && !categories.includes("Deliveries")) {
+    categories.push("Deliveries");
+  }
+  if (hasDispatchAccess(profile) && !categories.includes("Vehicles")) categories.push("Vehicles");
+  return categories;
 }
 
 async function setupNotifications(client, profile, toast) {
