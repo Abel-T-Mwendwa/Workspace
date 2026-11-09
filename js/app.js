@@ -94,6 +94,7 @@ let urgentPopupLastShownAt = 0;
 let deliveryRealtimeTimer = null;
 let deliveryRealtimeIds = new Set();
 let deliveryRowsVersion = 0;
+let deliveryExitingRows = new Map();
 let deliveryRefreshToken = 0;
 let vehicleRows = [];
 let riderJobRows = [];
@@ -108,6 +109,11 @@ let activeRiderJobCount = 0;
 let deliveryItemsState = { initial: [], lines: [] };
 let deliveryEditId = null;
 let productionEditId = null;
+let deliveryClientDefaults = { client: "", contacts: [], addresses: [] };
+let deliveryClientSuggestionsTimer = null;
+let deliveryAutofilledContactName = "";
+let deliveryAutofilledContactNumber = "";
+let deliveryAutofilledAddressLines = new WeakSet();
 let endingSession = false;
 let sessionExpiryTimer = null;
 let designerChangeTrigger = null;
@@ -1145,50 +1151,394 @@ function tallyMarkup(items) {
   return items.map(([label, value]) => `<div class="stat-card"><span>${escapeHtml(label)}</span><strong>${value}</strong></div>`).join("");
 }
 
-function periodDateRange(period) {
-  const current = new Date(`${dateKey(today)}T00:00:00Z`);
-  let start = new Date(current);
-  let end = new Date(current);
-  if (period === "week") {
-    start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
-    end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 7);
-  } else if (period === "month") {
-    start.setUTCDate(1);
-    end = new Date(start);
-    end.setUTCMonth(end.getUTCMonth() + 1);
-  } else {
-    end.setUTCDate(end.getUTCDate() + 1);
-  }
-  const format = (value) => value.toISOString().slice(0, 10);
-  return { from: format(start), to: format(end) };
+let deliveryActivityPeriod = { type: "day", date: "", dates: [], month: "" };
+
+function activityPeriodType(period) {
+  return typeof period === "string" ? period : period.type;
 }
 
-async function activityCount(table, period, card) {
-  let query = client.from(table).select("id", { count: "exact", head: true });
+function activityPeriodIsCustom(period) {
+  const type = activityPeriodType(period);
+  return type === "day" ? Boolean(period.date)
+    : type === "week" ? Boolean(period.dates?.length)
+      : Boolean(period.month);
+}
+
+function activityDateRanges(period) {
+  const type = activityPeriodType(period);
+  const todayKey = dateKey(today);
+  const oneDay = (date) => {
+    const end = new Date(`${date}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() + 1);
+    return { from: date, to: end.toISOString().slice(0, 10) };
+  };
+  const monthRange = (month) => {
+    const start = new Date(`${month}-01T00:00:00Z`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+  };
+  if (type === "day") return [oneDay(typeof period === "object" && period.date ? period.date : todayKey)];
+  if (type === "week" && typeof period === "object" && period.dates?.length) {
+    return [...new Set(period.dates)].sort().map(oneDay);
+  }
+  if (type === "month") {
+    const month = typeof period === "object" && period.month ? period.month : todayKey.slice(0, 7);
+    return [monthRange(month)];
+  }
+  const start = new Date(`${todayKey}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 7);
+  return [{ from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) }];
+}
+
+function periodDateRange(period) {
+  return activityDateRanges(period)[0];
+}
+
+function activityPeriodSummary(period, titleCase = false) {
+  const type = activityPeriodType(period);
+  const capitalize = (value) => titleCase ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+  if (type === "day") {
+    const date = typeof period === "object" && period.date ? period.date : "";
+    return capitalize(date ? localDate(date) : "today");
+  }
+  if (type === "week") {
+    const dates = typeof period === "object" ? [...new Set(period.dates || [])].sort() : [];
+    return capitalize(dates.length ? `${dates.length} days selected` : "this week");
+  }
+  const month = typeof period === "object" && period.month ? period.month : "";
+  if (!month) return capitalize("this month");
+  return capitalize(new Intl.DateTimeFormat("en", {
+    month: "long", year: "numeric", timeZone: "Africa/Nairobi"
+  }).format(new Date(`${month}-01T12:00:00+03:00`)));
+}
+
+function activityPeriodDetail(period) {
+  const type = activityPeriodType(period);
+  if (type === "day") {
+    const date = typeof period === "object" && period.date ? period.date : dateKey(today);
+    return localDate(date);
+  }
+  if (type === "week" && typeof period === "object" && period.dates?.length) {
+    return [...new Set(period.dates)].sort().map(localDate).join(", ");
+  }
+  if (type === "month" && typeof period === "object" && period.month) {
+    const { from, to } = activityDateRanges(period)[0];
+    const end = new Date(`${to}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() - 1);
+    return `${localDate(from)} – ${localDate(end.toISOString().slice(0, 10))}`;
+  }
+  const { from, to } = activityDateRanges(period)[0];
+  const end = new Date(`${to}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() - 1);
+  return `${localDate(from)} – ${localDate(end.toISOString().slice(0, 10))}`;
+}
+
+function activityQuery(table, period, card, columns, options = {}) {
+  let query = client.from(table).select(columns, options);
   if (card.dateColumn) {
-    const range = periodDateRange(period);
-    query = query.gte(card.dateColumn, `${range.from}T00:00:00+03:00`)
-      .lt(card.dateColumn, `${range.to}T00:00:00+03:00`);
+    const ranges = activityDateRanges(period);
+    if (ranges.length === 1) {
+      query = query.gte(card.dateColumn, `${ranges[0].from}T00:00:00+03:00`)
+        .lt(card.dateColumn, `${ranges[0].to}T00:00:00+03:00`);
+    } else {
+      query = query.or(ranges.map(({ from, to }) =>
+        `and(${card.dateColumn}.gte.${from}T00:00:00+03:00,${card.dateColumn}.lt.${to}T00:00:00+03:00)`
+      ).join(","));
+    }
   }
   for (const [column, value] of Object.entries(card.filters || {})) {
     query = value === null ? query.is(column, null)
       : value === "notNull" ? query.not(column, "is", null) : query.eq(column, value);
   }
+  return query;
+}
+
+async function activityCount(table, period, card) {
+  const query = activityQuery(table, period, card, "id", { count: "exact", head: true });
   const { count, error } = await query;
   if (error) throw error;
   return count || 0;
 }
 
+async function deliveryActivityRows(period, card) {
+  const rows = [];
+  const columns = "id,created_by,salesperson_id,client_name,items,delivery_date,production_status,dispatch_status,ready_at,dispatched_at";
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await activityQuery(deliveryReadTable(), period, card, columns)
+      .order("delivery_date", { ascending: true })
+      .range(offset, offset + 999);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if ((data || []).length < 1000) {
+      return rows.sort((left, right) =>
+        String(left.delivery_date || "").localeCompare(String(right.delivery_date || "")));
+    }
+  }
+}
+
+function deliveryActivityItemText(items) {
+  if (!Array.isArray(items) || !items.length) return "-";
+  return items.map((item) => {
+    const name = String(item.item_name || "").trim();
+    const quantity = item.quantity ? ` × ${item.quantity} pcs` : "";
+    return `${name}${quantity}`.trim() || "-";
+  }).join(", ");
+}
+
+function renderDeliveryActivityRows(rows) {
+  return rows.map((row) => {
+    const salesperson = deliverySalespersonName(row);
+    const salesOrders = deliverySoNumbers(row).join(", ") || "-";
+    return `<tr><td>${escapeHtml(localDate(row.delivery_date) === "—" ? "-" : localDate(row.delivery_date))}</td><td>${escapeHtml(salesperson)}</td><td>${escapeHtml(salesOrders)}</td><td>${escapeHtml(row.client_name || "-")}</td><td>${escapeHtml(deliveryActivityItemText(row.items))}</td><td>${deliveryProductionStatusMarkup(row, "-")}</td><td>${deliveryDispatchStatusMarkup(row, "-")}</td></tr>`;
+  }).join("");
+}
+
+async function openDeliveryActivity(card, period) {
+  const dialog = document.querySelector("#delivery-activity-dialog");
+  const requestId = Number(dialog.dataset.requestId || 0) + 1;
+  dialog.dataset.requestId = String(requestId);
+  const weekDates = activityPeriodType(period) === "week" ? [...new Set(period.dates || [])] : [];
+  const periodTitle = weekDates.length ? `${weekDates.length} selected days` : activityPeriodSummary(period, true);
+  const title = `${card.label}: ${periodTitle}`;
+  document.querySelector("#delivery-activity-heading").textContent = title;
+  document.querySelector("#delivery-activity-title").textContent = title;
+  document.querySelector("#delivery-activity-range").textContent = activityPeriodDetail(period);
+  document.querySelector("#delivery-activity-total").textContent = "Total: 0";
+  document.querySelector("#delivery-activity-printed").textContent = `Printed on ${localDateTime(new Date())}`;
+  document.querySelector("#delivery-activity-message").textContent = "Loading deliveries…";
+  document.querySelector("#delivery-activity-rows").replaceChildren();
+  document.querySelector("#delivery-activity-table").classList.add("hidden");
+  if (!dialog.open) dialog.showModal();
+  try {
+    const rows = await deliveryActivityRows(period, card);
+    if (!dialog.open || Number(dialog.dataset.requestId) !== requestId
+      || JSON.stringify(deliveryActivityPeriod) !== JSON.stringify(period)) return;
+    document.querySelector("#delivery-activity-total").textContent = `Total: ${rows.length}`;
+    document.querySelector("#delivery-activity-rows").innerHTML = renderDeliveryActivityRows(rows);
+    document.querySelector("#delivery-activity-table").classList.toggle("hidden", !rows.length);
+    document.querySelector("#delivery-activity-message").textContent =
+      rows.length ? "" : "No deliveries for this period.";
+  } catch {
+    if (!dialog.open || Number(dialog.dataset.requestId) !== requestId) return;
+    document.querySelector("#delivery-activity-table").classList.add("hidden");
+    document.querySelector("#delivery-activity-message").textContent = "Could not load deliveries for this period.";
+  }
+}
+
 async function renderPeriodSummary(rootId, periodId, table, cards) {
   const root = document.querySelector(`#${rootId}`);
-  const period = document.querySelector(`#${periodId}`)?.value || "day";
+  const period = periodId === "delivery-period"
+    ? deliveryActivityPeriod : document.querySelector(`#${periodId}`)?.value || "day";
   const counts = await Promise.all(cards.map((card) => activityCount(table, period, card)));
-  const periodLabel = ({ day: "today", week: "this week", month: "this month" })[period] || period;
+  const periodLabel = typeof period === "object" && activityPeriodIsCustom(period)
+    ? activityPeriodSummary(period) : ({ day: "today", week: "this week", month: "this month" })[activityPeriodType(period)] || period;
   root.innerHTML = tallyMarkup(cards.map((card, index) => [
     rootId === "delivery-tallies" ? `${card.label} ${periodLabel}` : card.label,
     counts[index]
   ]));
+}
+
+function updateDeliveryPeriodDisplay(period) {
+  const type = activityPeriodType(period);
+  const typeLabel = type[0].toUpperCase() + type.slice(1);
+  const month = typeof period === "object" && period.month
+    ? period.month : dateKey(today).slice(0, 7);
+  const monthLabel = new Intl.DateTimeFormat("en", {
+    month: "long", year: "numeric", timeZone: "Africa/Nairobi"
+  }).format(new Date(`${month}-01T12:00:00+03:00`));
+  const summary = type === "month" ? monthLabel : activityPeriodSummary(period, true);
+  document.querySelector("#delivery-period").value = `${typeLabel} · ${summary}`;
+}
+
+function renderDeliveryPeriodCalendar(body, draft, viewMonth) {
+  body.replaceChildren();
+  const [year, month] = viewMonth.split("-").map(Number);
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const start = new Date(first);
+  start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+  const calendar = document.createElement("div");
+  calendar.className = "delivery-period-calendar";
+  const header = document.createElement("div");
+  header.className = "delivery-period-calendar-heading";
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.className = "quiet";
+  previous.dataset.calendarNav = "-1";
+  previous.setAttribute("aria-label", "Previous month");
+  previous.textContent = "‹";
+  const monthLabel = document.createElement("strong");
+  monthLabel.textContent = new Intl.DateTimeFormat("en", {
+    month: "long", year: "numeric", timeZone: "UTC"
+  }).format(first);
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "quiet";
+  next.dataset.calendarNav = "1";
+  next.setAttribute("aria-label", "Next month");
+  next.textContent = "›";
+  header.append(previous, monthLabel, next);
+  const weekdays = document.createElement("div");
+  weekdays.className = "delivery-period-weekdays";
+  ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((day) => {
+    const label = document.createElement("span");
+    label.textContent = day;
+    weekdays.append(label);
+  });
+  const days = document.createElement("div");
+  days.className = "delivery-period-days";
+  const selectedDates = new Set(draft.type === "day"
+    ? [draft.date].filter(Boolean) : draft.dates);
+  for (let index = 0; index < 42; index += 1) {
+    const date = new Date(start);
+    date.setUTCDate(start.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    const day = document.createElement("button");
+    day.type = "button";
+    day.className = "delivery-period-day";
+    if (key.slice(0, 7) !== viewMonth) day.classList.add("is-outside-month");
+    day.dataset.calendarDay = key;
+    day.id = `delivery-period-day-${key}`;
+    day.setAttribute("aria-label", localDate(key));
+    const selected = selectedDates.has(key);
+    day.setAttribute("aria-pressed", String(selected));
+    if (selected) day.classList.add("is-selected");
+    if (key === dateKey(today)) day.setAttribute("aria-current", "date");
+    day.textContent = String(date.getUTCDate());
+    days.append(day);
+  }
+  calendar.append(header, weekdays, days);
+  body.append(calendar);
+}
+
+function setupDeliveryPeriodPicker(onApply) {
+  const input = document.querySelector("#delivery-period");
+  const control = input.closest(".delivery-period-control");
+  const icon = control.querySelector(".delivery-period-icon");
+  const popover = control.querySelector("#delivery-period-popover");
+  const body = control.querySelector("#delivery-period-picker-body");
+  const typeButtons = [...control.querySelectorAll("[data-period-type]")];
+  let draft = { ...deliveryActivityPeriod, dates: [...deliveryActivityPeriod.dates] };
+  let viewMonth = dateKey(today).slice(0, 7);
+  const setOpen = (open) => {
+    popover.hidden = !open;
+    input.setAttribute("aria-expanded", String(open));
+    icon.setAttribute("aria-expanded", String(open));
+    if (open) {
+      draft = { ...deliveryActivityPeriod, dates: [...deliveryActivityPeriod.dates] };
+      viewMonth = draft.type === "month" && draft.month ? draft.month
+        : draft.type === "day" && draft.date ? draft.date.slice(0, 7)
+          : draft.type === "week" && draft.dates.length ? draft.dates[0].slice(0, 7)
+            : dateKey(today).slice(0, 7);
+      render();
+    } else {
+      updateDeliveryPeriodDisplay(deliveryActivityPeriod);
+    }
+  };
+  const updateTypeButtons = () => typeButtons.forEach((button) =>
+    button.setAttribute("aria-pressed", String(button.dataset.periodType === draft.type)));
+  const render = () => {
+    updateTypeButtons();
+    body.replaceChildren();
+    if (draft.type === "month") {
+      const monthInput = document.createElement("input");
+      monthInput.type = "month";
+      monthInput.value = draft.month || dateKey(today).slice(0, 7);
+      monthInput.classList.toggle("is-selected", Boolean(draft.month));
+      monthInput.setAttribute("aria-label", "Choose month and year");
+      monthInput.addEventListener("input", () => {
+        draft.month = monthInput.value;
+        monthInput.classList.toggle("is-selected", Boolean(draft.month));
+        updateDeliveryPeriodDisplay(draft);
+      });
+      body.append(monthInput);
+    } else {
+      renderDeliveryPeriodCalendar(body, draft, viewMonth);
+    }
+    updateDeliveryPeriodDisplay(draft);
+  };
+  const selectType = (type) => {
+    draft = { type, date: "", dates: [], month: "" };
+    viewMonth = dateKey(today).slice(0, 7);
+    render();
+  };
+  const apply = () => {
+    deliveryActivityPeriod = { ...draft, dates: [...draft.dates] };
+    updateDeliveryPeriodDisplay(deliveryActivityPeriod);
+    setOpen(false);
+    onApply();
+  };
+  input.value = "";
+  updateDeliveryPeriodDisplay(deliveryActivityPeriod);
+  input.addEventListener("click", () => setOpen(true));
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setOpen(true);
+    }
+  });
+  icon.addEventListener("click", () => setOpen(popover.hidden));
+  typeButtons.forEach((button, index) => {
+    button.addEventListener("click", () => selectType(button.dataset.periodType));
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const next = (index + (event.key === "ArrowRight" ? 1 : typeButtons.length - 1)) % typeButtons.length;
+      typeButtons[next].focus();
+      selectType(typeButtons[next].dataset.periodType);
+    });
+  });
+  body.addEventListener("click", (event) => {
+    const navigation = event.target.closest("[data-calendar-nav]");
+    if (navigation) {
+      const date = new Date(`${viewMonth}-01T00:00:00Z`);
+      date.setUTCMonth(date.getUTCMonth() + Number(navigation.dataset.calendarNav));
+      viewMonth = date.toISOString().slice(0, 7);
+      render();
+      return;
+    }
+    const dayButton = event.target.closest("[data-calendar-day]");
+    if (!dayButton) return;
+    const date = dayButton.dataset.calendarDay;
+    if (draft.type === "day") draft.date = date;
+    else {
+      const dates = new Set(draft.dates);
+      if (dates.has(date)) dates.delete(date);
+      else dates.add(date);
+      draft.dates = [...dates].sort();
+    }
+    if (date.slice(0, 7) !== viewMonth) viewMonth = date.slice(0, 7);
+    render();
+    body.querySelector(`#delivery-period-day-${date}`)?.focus();
+  });
+  body.addEventListener("keydown", (event) => {
+    const dayButton = event.target.closest("[data-calendar-day]");
+    if (!dayButton || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    const date = new Date(`${dayButton.dataset.calendarDay}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + offsets[event.key]);
+    const target = date.toISOString().slice(0, 10);
+    viewMonth = target.slice(0, 7);
+    render();
+    body.querySelector(`#delivery-period-day-${target}`)?.focus();
+  });
+  control.querySelector("#delivery-period-clear").addEventListener("click", () => {
+    draft = { type: draft.type, date: "", dates: [], month: "" };
+    apply();
+  });
+  control.querySelector("#delivery-period-apply").addEventListener("click", apply);
+  document.addEventListener("pointerdown", (event) => {
+    if (!popover.hidden && !control.contains(event.target)) setOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !popover.hidden) {
+      event.stopPropagation();
+      setOpen(false);
+    }
+  });
 }
 
 function bindPeriodSummary(periodId, update) {
@@ -3224,9 +3574,27 @@ function renderItemLineEditor() {
         input.inputMode = "numeric";
       }
       input.value = name === "so_number" && !line[name] ? SO_NUMBER_PREFIX : line[name] ?? "";
+      if (name === "address" && !input.value && !deliveryEditId && !productionEditId) {
+        const clientName = document.querySelector("#delivery-request-form").elements.client_name.value.trim();
+        if (deliveryClientDefaults.client === clientName && deliveryClientDefaults.addresses.length) {
+          line.address = deliveryClientDefaults.addresses[0];
+          input.value = line.address;
+          deliveryAutofilledAddressLines.add(line);
+          const datalist = document.createElement("datalist");
+          datalist.id = `delivery-address-suggestions-${index}`;
+          deliveryClientDefaults.addresses.forEach((address) => {
+            const option = document.createElement("option");
+            option.value = address;
+            datalist.append(option);
+          });
+          input.setAttribute("list", datalist.id);
+          label.append(datalist);
+        }
+      }
       if (name === "so_number") protectSoNumberInput(input);
       input.addEventListener("input", () => {
         line[name] = input.value;
+        if (name === "address") deliveryAutofilledAddressLines.delete(line);
         input.classList.remove("field-error");
       });
       label.append(input);
@@ -3698,10 +4066,18 @@ function replaceDeliveryRows(updatedRows, ids, render = true) {
   if (render) renderDeliveryRows(ids);
 }
 
+function deliveryStatusSignature(row) {
+  return JSON.stringify([
+    row.production_status, row.goods_status, row.dispatch_status,
+    row.ready_at, row.dispatched_at, row.delivered_at
+  ]);
+}
+
 async function patchDeliveryRowsById(ids) {
   if (document.hidden || !ids.length) return;
   deliveryRowsVersion += 1;
   const uniqueIds = [...new Set(ids)];
+  const previousRows = new Map(deliveryRows.map((row) => [row.id, row]));
   const select = profile.role === "salesperson" ? `${deliverySelect},goods_status_updated_at` : deliverySelect;
   const rows = [];
   for (let index = 0; index < uniqueIds.length; index += 100) {
@@ -3710,6 +4086,10 @@ async function patchDeliveryRowsById(ids) {
     if (error) throw error;
     rows.push(...(data || []));
   }
+  const statusChangedIds = new Set(rows.filter((row) => {
+    const previous = previousRows.get(row.id);
+    return previous && deliveryStatusSignature(previous) !== deliveryStatusSignature(row);
+  }).map((row) => row.id));
   replaceDeliveryRows(rows, uniqueIds, false);
   if (page === "deliveries.html") {
     try {
@@ -3725,7 +4105,10 @@ async function patchDeliveryRowsById(ids) {
       toast(error.message || "Could not refresh production store salespeople.", "error");
     }
   }
-  renderDeliveryRows(uniqueIds);
+  renderDeliveryRows(uniqueIds, statusChangedIds);
+  if (page === "deliveries.html" && statusChangedIds.size) {
+    document.querySelector("#delivery-period").dispatchEvent(new Event("change"));
+  }
   await refreshAssignedPendingDeliveries();
   await refreshUrgentDeliveryAlerts();
 }
@@ -3739,9 +4122,11 @@ async function refreshDeliveryRows() {
   const oldById = new Map(deliveryRows.map((row) => [row.id, row]));
   const freshById = new Map(freshRows.map((row) => [row.id, row]));
   const changedIds = new Set();
+  const statusChangedIds = new Set();
   for (const row of freshRows) {
     const old = oldById.get(row.id);
     if (!old || JSON.stringify(old) !== JSON.stringify(row)) changedIds.add(row.id);
+    if (old && deliveryStatusSignature(old) !== deliveryStatusSignature(row)) statusChangedIds.add(row.id);
   }
   for (const id of oldById.keys()) {
     if (!freshById.has(id)) changedIds.add(id);
@@ -3762,7 +4147,10 @@ async function refreshDeliveryRows() {
       toast(error.message || "Could not refresh production store salespeople.", "error");
     }
   }
-  renderDeliveryRows([...changedIds]);
+  renderDeliveryRows([...changedIds], statusChangedIds);
+  if (page === "deliveries.html" && statusChangedIds.size) {
+    document.querySelector("#delivery-period").dispatchEvent(new Event("change"));
+  }
   await refreshAssignedPendingDeliveries();
   await refreshUrgentDeliveryAlerts();
 }
@@ -4012,22 +4400,87 @@ function deliveryRowMarkup(row) {
       ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
       : "—"}</td>`
     : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
-  const productionStatus = row.production_status || "—";
-  const productionCell = `<td>${productionStatus === "—" ? "—" : `<span class="delivery-status-${productionStatus === "Ready" ? "green" : "red"}">${escapeHtml(productionStatus)}</span>`}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}</td>`;
+  const productionCell = `<td>${deliveryProductionStatusMarkup(row)}</td>`;
   const urgent = deliveryAddressUrgent(row);
   const missingAddressMarker = profile.role === "salesperson" && urgent
       ? '<br><small class="delivery-address-urgent">URGENT: address missing</small>'
       : "";
-  const dispatchCell = `<td><span class="delivery-status-${row.dispatch_status === "Delivered" ? "green" : "orange"}">${row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed"}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}${missingAddressMarker}</td>`;
-  const actionsCell = `<td><div class="delivery-table-actions">${["admin", "production", "dispatch", "salesperson"].includes(profile.role) || hasProductionAccess(profile) || hasDispatchAccess(profile) || isProductionStoreMode() ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : ""}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
+  const dispatchCell = `<td>${deliveryDispatchStatusMarkup(row)}${missingAddressMarker}</td>`;
+  const canView = ["admin", "production", "dispatch", "salesperson"].includes(profile.role)
+    || hasProductionAccess(profile) || hasDispatchAccess(profile) || isProductionStoreMode();
+  const viewButton = canView ? `<button type="button" class="secondary" data-delivery-view="${escapeHtml(row.id)}">View</button>` : "";
+  const actionsCell = `<td><div class="delivery-table-actions">${viewButton}${!isProductionStoreMode() && canSalespersonEditDelivery(row) ? `<button type="button" class="primary" data-delivery-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${isProductionStoreMode() && hasProductionStoreAccess(profile) && (row.created_by === profile.id || row.created_by === row.salesperson_id) ? `<button type="button" class="primary" data-production-edit="${escapeHtml(row.id)}">Edit</button>` : ""}${profile.role === "admin" ? `<button type="button" class="danger" data-delivery-delete="${escapeHtml(row.id)}">Delete</button>` : ""}${deliveryActions(row)}</div></td>`;
   const rowDataCells = page === "production-store.html" || page === "deliveries.html"
     && (deliveryOperationalRole() === "production" || profile.role === "salesperson" && !isDeliveryRoleChipMode())
     ? deliveryColumns
     : `<td>${escapeHtml(row.sr)}</td>${deliveryDateCell}${deliveryColumns}`;
-  return `<tr data-entry-id="${escapeHtml(row.id)}"${profile.role === "salesperson" && urgent ? ' class="delivery-address-urgent-row"' : ""}>${rowDataCells}${productionCell}${dispatchCell}${actionsCell}</tr>`;
+  const rowLabel = deliverySoNumbers(row).join(", ") || row.ref_no || row.sr;
+  const rowViewAttributes = page === "deliveries.html" && canView
+    ? ` data-row-view tabindex="0" role="button" aria-label="${escapeHtml(`View delivery ${rowLabel}`)}"` : "";
+  return `<tr data-entry-id="${escapeHtml(row.id)}"${rowViewAttributes}${profile.role === "salesperson" && urgent ? ' class="delivery-address-urgent-row"' : ""}>${rowDataCells}${productionCell}${dispatchCell}${actionsCell}</tr>`;
 }
 
-function renderDeliveryRows(changedIds = null) {
+function deliveryProductionStatusMarkup(row, emptyValue = "—") {
+  const status = row.production_status;
+  if (!status) return `${emptyValue}${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}`;
+  return `<span class="delivery-status-${status === "Ready" ? "green" : "red"}">${escapeHtml(status)}</span>${row.ready_at ? `<br><small>${escapeHtml(localDateTime(row.ready_at))}</small>` : ""}`;
+}
+
+function deliveryDispatchStatusMarkup(row) {
+  const status = row.dispatch_status === "Delivered" ? "Delivered"
+    : row.dispatched_at ? "Not delivered" : "Not packed";
+  return `<span class="delivery-status-${status === "Delivered" ? "green" : "orange"}">${escapeHtml(status)}</span>${row.dispatched_at ? `<br><small>Packed ${escapeHtml(localDateTime(row.dispatched_at))}</small>` : ""}`;
+}
+
+function waitForTransition(element, property, fallbackMs) {
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(finish, fallbackMs);
+    function finish() {
+      window.clearTimeout(timeout);
+      element.removeEventListener("transitionend", onEnd);
+      resolve();
+    }
+    function onEnd(event) {
+      if (event.target === element && event.propertyName === property) finish();
+    }
+    element.addEventListener("transitionend", onEnd);
+  });
+}
+
+async function animateDeliveryRowExit(row) {
+  const id = row.dataset.entryId;
+  const tableWrap = row.closest(".table-wrap");
+  if (!id || deliveryExitingRows.has(id)) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    row.remove();
+    return;
+  }
+  deliveryExitingRows.set(id, row);
+  tableWrap?.classList.add("delivery-row-exit-active");
+  const firstCell = row.cells[0];
+  if (!firstCell) {
+    row.remove();
+    deliveryExitingRows.delete(id);
+    return;
+  }
+  row.classList.add("row-exit-right");
+  await waitForTransition(firstCell, "transform", 500);
+  if (!row.isConnected) {
+    deliveryExitingRows.delete(id);
+    return;
+  }
+  row.style.height = `${row.getBoundingClientRect().height}px`;
+  void row.offsetHeight;
+  row.classList.add("row-collapse");
+  row.style.height = "0px";
+  await waitForTransition(row, "height", 250);
+  row.remove();
+  deliveryExitingRows.delete(id);
+  if (!deliveryExitingRows.size) tableWrap?.classList.remove("delivery-row-exit-active");
+  renderDeliveryRows();
+}
+
+function renderDeliveryRows(changedIds = null, statusChangedIds = new Set()) {
   const tbody = document.querySelector("#delivery-rows");
   const matchingRows = deliveryRows.filter(deliveryMatchesBaseFilters);
   if (page === "production-store.html") renderProductionGoodsChips(matchingRows);
@@ -4063,7 +4516,9 @@ function renderDeliveryRows(changedIds = null) {
     : visibleRows;
   const filtered = sortRows(brandingFilteredRows);
   if (changedIds === null) {
-    tbody.innerHTML = filtered.map(deliveryRowMarkup).join("");
+    tbody.innerHTML = filtered.filter((row) => !deliveryExitingRows.has(row.id))
+      .map(deliveryRowMarkup).join("");
+    deliveryExitingRows.forEach((row) => tbody.append(row));
     bindDeliveryRowActions(tbody);
   } else {
     const visibleById = new Map(filtered.map((row) => [row.id, row]));
@@ -4071,13 +4526,16 @@ function renderDeliveryRows(changedIds = null) {
       const current = tbody.querySelector(`[data-entry-id="${CSS.escape(id)}"]`);
       const row = visibleById.get(id);
       if (!row) {
-        current?.remove();
+        if (current && statusChangedIds.has(id)) void animateDeliveryRowExit(current);
+        else current?.remove();
         continue;
       }
+      if (deliveryExitingRows.has(id)) continue;
       const template = document.createElement("tbody");
       template.innerHTML = deliveryRowMarkup(row);
       const replacement = template.firstElementChild;
       current?.remove();
+      if (current && statusChangedIds.has(id)) replacement.classList.add("row-status-flash");
       const index = filtered.findIndex((item) => item.id === id);
       const next = filtered.slice(index + 1).map((item) =>
         tbody.querySelector(`[data-entry-id="${CSS.escape(item.id)}"]`)).find(Boolean);
@@ -4559,6 +5017,103 @@ async function initDeliveries() {
     setupDeliveryBrandingPicker(form);
     document.querySelector("#delivery-salesperson-field")?.classList.toggle("hidden", !productionEntry);
     configureDeliveryForm(form, productionEntry);
+    const clientInput = form.elements.client_name;
+    const contactNameInput = form.elements.contact_name;
+    const contactNumberInput = form.elements.contact_number;
+    const clientSuggestions = document.querySelector("#delivery-client-suggestions");
+    const contactSuggestions = document.querySelector("#delivery-contact-suggestions");
+    let contactNameEdited = false;
+    let contactNumberEdited = false;
+    const clearClientDefaults = () => {
+      if (!contactNameEdited && deliveryAutofilledContactName
+        && contactNameInput.value === deliveryAutofilledContactName) contactNameInput.value = "";
+      if (!contactNumberEdited && deliveryAutofilledContactNumber
+        && contactNumberInput.value === deliveryAutofilledContactNumber) contactNumberInput.value = "";
+      deliveryItemsState.lines.forEach((line) => {
+        if (deliveryAutofilledAddressLines.has(line)) {
+          line.address = "";
+          deliveryAutofilledAddressLines.delete(line);
+        }
+      });
+      deliveryClientDefaults = { client: "", contacts: [], addresses: [] };
+      deliveryAutofilledContactName = "";
+      deliveryAutofilledContactNumber = "";
+      contactSuggestions.replaceChildren();
+    };
+    contactNameInput.addEventListener("input", () => { contactNameEdited = true; });
+    contactNumberInput.addEventListener("input", () => { contactNumberEdited = true; });
+    clientInput.addEventListener("input", () => {
+      if (deliveryEditId || productionEditId) return;
+      if (deliveryClientDefaults.client && deliveryClientDefaults.client !== clientInput.value.trim()) {
+        clearClientDefaults();
+      }
+      clearTimeout(deliveryClientSuggestionsTimer);
+      const search = clientInput.value.trim();
+      clientSuggestions.replaceChildren();
+      if (search.length < 2) return;
+      deliveryClientSuggestionsTimer = setTimeout(async () => {
+        let result;
+        try {
+          result = await client.rpc("delivery_client_suggestions", { p_search: search });
+        } catch {
+          return;
+        }
+        const { data, error } = result;
+        if (error || deliveryEditId || productionEditId || clientInput.value.trim() !== search) return;
+        (data ?? []).forEach((row) => {
+          const option = document.createElement("option");
+          option.value = row.client_name;
+          clientSuggestions.append(option);
+        });
+      }, 250);
+    });
+    clientInput.addEventListener("change", async () => {
+      if (deliveryEditId || productionEditId) return;
+      const clientName = clientInput.value.trim();
+      if (deliveryClientDefaults.client !== clientName) clearClientDefaults();
+      deliveryClientDefaults = { client: clientName, contacts: [], addresses: [] };
+      if (!clientName) return;
+      let result;
+      try {
+        result = await client.rpc("delivery_client_defaults", { p_client: clientName });
+      } catch {
+        return;
+      }
+      const { data, error } = result;
+      if (error || deliveryEditId || productionEditId || clientInput.value.trim() !== clientName) return;
+      const rows = data ?? [];
+      const contacts = rows.filter((row) => row.kind === "contact");
+      const addresses = rows.filter((row) => row.kind === "address").map((row) => row.value);
+      deliveryClientDefaults = { client: clientName, contacts, addresses };
+      contactSuggestions.replaceChildren();
+      contacts.forEach((contact) => {
+        const option = document.createElement("option");
+        option.value = contact.value;
+        contactSuggestions.append(option);
+      });
+      const newestContact = contacts[0];
+      if (newestContact?.value && !contactNameInput.value && !contactNameEdited) {
+        contactNameInput.value = newestContact.value;
+        deliveryAutofilledContactName = newestContact.value;
+        contactNameEdited = false;
+      }
+      if (newestContact?.contact_number && !contactNumberInput.value && !contactNumberEdited) {
+        contactNumberInput.value = newestContact.contact_number;
+        deliveryAutofilledContactNumber = newestContact.contact_number;
+        contactNumberEdited = false;
+      }
+    });
+    contactNameInput.addEventListener("change", () => {
+      if (deliveryEditId || productionEditId || contactNumberInput.value
+        || deliveryClientDefaults.client !== clientInput.value.trim()) return;
+      const contact = deliveryClientDefaults.contacts.find((entry) =>
+        entry.value.toLowerCase() === contactNameInput.value.toLowerCase());
+      if (contact?.contact_number) {
+        contactNumberInput.value = contact.contact_number;
+        deliveryAutofilledContactNumber = contact.contact_number;
+        contactNumberEdited = false;
+      }
+    });
     if (productionEntry) await loadDeliverySalespeople();
     form.elements.delivery_date.removeAttribute("min");
     updateDeliverySlotOptions();
@@ -4573,6 +5128,11 @@ async function initDeliveries() {
     });
     form.addEventListener("submit", submitDelivery);
     form.addEventListener("reset", () => {
+      clearTimeout(deliveryClientSuggestionsTimer);
+      clearClientDefaults();
+      clientSuggestions.replaceChildren();
+      contactNameEdited = false;
+      contactNumberEdited = false;
       setTimeout(() => {
         document.querySelector('[name="items"]').value = "[]";
         document.querySelector("#delivery-items-open").textContent = "Click to add item details";
@@ -4686,7 +5246,66 @@ async function initDeliveries() {
       { label: "Packed", dateColumn: "dispatched_at" },
       { label: "Delivered", dateColumn: "delivered_at" }
     ];
-  bindPeriodSummary("delivery-period", () => renderPeriodSummary("delivery-tallies", "delivery-period", deliveryReadTable(), deliveryCards));
+  if (page === "deliveries.html") {
+    const tiles = document.querySelector("#delivery-tallies");
+    const openFromTile = (event) => {
+      const tile = event.target.closest(".delivery-activity-tile");
+      if (!tile || !tiles.contains(tile)) return;
+      const card = deliveryCards[Number(tile.dataset.deliveryActivityIndex)];
+      if (card) void openDeliveryActivity(card, deliveryActivityPeriod);
+    };
+    tiles.addEventListener("click", openFromTile);
+    tiles.addEventListener("keydown", (event) => {
+      if ((event.key === "Enter" || event.key === " ") && event.target.matches(".delivery-activity-tile")) {
+        event.preventDefault();
+        event.target.click();
+      }
+    });
+    const dialog = document.querySelector("#delivery-activity-dialog");
+    const deliveryBody = document.querySelector("#delivery-rows");
+    const openDeliveryRow = (row) => {
+      if (row.classList.contains("row-exit-right")) return;
+      const trigger = row.querySelector("[data-delivery-view]");
+      const delivery = deliveryRows.find((item) => item.id === row.dataset.entryId);
+      if (delivery && trigger) void openDeliveryView(delivery, trigger);
+    };
+    deliveryBody.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const row = event.target.closest("tr[data-row-view]");
+      if (!row || !deliveryBody.contains(row)
+        || event.target.closest("button, select, a, input, label, textarea, [data-delivery-items]")
+        || window.getSelection()?.toString()) return;
+      openDeliveryRow(row);
+    });
+    deliveryBody.addEventListener("keydown", (event) => {
+      if (!(event.target instanceof HTMLTableRowElement)
+        || !event.target.matches("tr[data-row-view]")
+        || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      openDeliveryRow(event.target);
+    });
+    document.querySelectorAll("[data-delivery-activity-close]").forEach((button) =>
+      button.addEventListener("click", () => dialog.close()));
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    setupDeliveryPeriodPicker(() => {
+      if (dialog.open) dialog.close();
+      document.querySelector("#delivery-period").dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    document.querySelector("#delivery-activity-print").addEventListener("click", () => window.print());
+  }
+  bindPeriodSummary("delivery-period", async () => {
+    await renderPeriodSummary("delivery-tallies", "delivery-period", deliveryReadTable(), deliveryCards);
+    if (page === "deliveries.html") {
+      document.querySelectorAll("#delivery-tallies .stat-card").forEach((tile, index) => {
+        tile.classList.add("delivery-activity-tile");
+        tile.tabIndex = 0;
+        tile.setAttribute("role", "button");
+        tile.dataset.deliveryActivityIndex = String(index);
+      });
+    }
+  });
   await loadDeliveries();
   await refreshAssignedPendingDeliveries();
   await refreshUrgentDeliveryAlerts();

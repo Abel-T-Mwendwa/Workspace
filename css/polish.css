@@ -1693,7 +1693,7 @@ textarea:focus {
 }
 
 .password-toggle-field input {
-  padding-right: 42px;
+  padding-right: 54px;
 }
 
 .password-toggle-field input[type="password"]::-ms-reveal,
@@ -4036,6 +4036,349 @@ tbody tr.delivery-address-urgent-row:hover {
   margin: 0 0 14px;
 }
 
+.delivery-activity-tile {
+  cursor: pointer;
+  transition: box-shadow 140ms ease;
+}
+
+.delivery-activity-tile:hover,
+.delivery-activity-tile:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
+.delivery-activity-dialog {
+  width: min(1200px, 96vw);
+  max-width: 96vw;
+  max-height: 90vh;
+}
+
+.delivery-activity-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+#delivery-activity-printable {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.delivery-period-control {
+  position: relative;
+  display: block;
+  flex: 0 1 260px;
+  min-width: 180px;
+  height: 40px;
+  white-space: nowrap;
+}
+
+#delivery-period {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-right: 42px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.delivery-period-icon {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  padding: 8px;
+  place-items: center;
+  transform: translateY(-50%);
+  color: var(--muted);
+  background: transparent;
+}
+
+.delivery-period-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.delivery-period-popover {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(340px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 3px 12px #18294a08;
+}
+
+.delivery-period-segments,
+.delivery-period-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.delivery-period-segments button {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px;
+}
+
+.delivery-period-segments button[aria-pressed="false"] {
+  color: var(--navy);
+  background: #eaf1fd;
+}
+
+.delivery-period-calendar-heading,
+.delivery-period-weekdays,
+.delivery-period-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.delivery-period-calendar-heading {
+  grid-column: 1 / -1;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  margin: 10px 0 6px;
+  text-align: center;
+}
+
+.delivery-period-calendar-heading button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 4px;
+  font-size: 22px;
+}
+
+.delivery-period-weekdays {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.delivery-period-weekdays span {
+  padding: 5px 0;
+}
+
+.delivery-period-day {
+  min-width: 0;
+  min-height: 40px;
+  padding: 4px 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--navy);
+  background: transparent;
+  font-size: 13px;
+}
+
+.delivery-period-day:hover:not([aria-pressed="true"]) {
+  background: #eaf1fd;
+}
+
+.delivery-period-day[aria-current="date"]:not([aria-pressed="true"]) {
+  outline: 1px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.delivery-period-day.is-selected[aria-pressed="true"] {
+  border-color: var(--blue);
+  color: #fff;
+  background: var(--blue);
+  font-weight: 700;
+}
+
+.delivery-period-day.is-selected[aria-pressed="true"]:hover {
+  filter: brightness(.9);
+}
+
+.delivery-period-day.is-outside-month {
+  color: var(--muted);
+}
+
+.delivery-period-day.is-outside-month.is-selected[aria-pressed="true"] {
+  border-color: var(--blue);
+  color: #fff;
+  background: color-mix(in srgb, var(--blue) 94%, white);
+  font-weight: 700;
+}
+
+.delivery-period-popover input[type="month"].is-selected {
+  border-color: var(--blue);
+  color: #fff;
+  background: var(--blue);
+  font-weight: 700;
+}
+
+.delivery-period-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.delivery-period-actions button {
+  min-height: 40px;
+}
+
+.delivery-activity-table-shell {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.delivery-activity-table-shell .table-wrap {
+  overflow-x: hidden;
+  overflow-y: visible;
+}
+
+.delivery-activity-print-header p {
+  margin: 6px 0;
+}
+
+#delivery-activity-table {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+#delivery-activity-table th,
+#delivery-activity-table td {
+  overflow-wrap: anywhere;
+}
+
+#delivery-activity-table th:nth-child(6),
+#delivery-activity-table th:nth-child(7),
+#delivery-activity-table td:nth-child(6),
+#delivery-activity-table td:nth-child(7) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+@media (max-width: 767px) {
+  .delivery-activity-dialog {
+    width: 98vw;
+    max-width: 98vw;
+  }
+
+  .delivery-activity-table-shell .table-wrap {
+    overflow-x: auto;
+  }
+
+  #delivery-activity-table {
+    min-width: 720px;
+  }
+}
+
+@media (max-width: 580px) {
+  .delivery-period-control {
+    flex-basis: min(260px, 52vw);
+    min-width: 150px;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  body:has(#delivery-activity-dialog[open]) > :not(#delivery-activity-dialog) {
+    display: none !important;
+  }
+
+  #delivery-activity-dialog[open] {
+    position: static;
+    display: block;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    color: #000;
+    background: #fff;
+    border: 0;
+    opacity: 1;
+    transform: none;
+    box-shadow: none;
+  }
+
+  #delivery-activity-dialog::backdrop {
+    display: none;
+  }
+
+  #delivery-activity-dialog .delivery-activity-content {
+    display: block;
+    max-height: none;
+    overflow: visible;
+  }
+
+  #delivery-activity-dialog #delivery-activity-printable {
+    overflow: visible;
+  }
+
+  #delivery-activity-dialog .delivery-activity-table-shell {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+  }
+
+  #delivery-activity-dialog .table-wrap {
+    overflow: visible;
+  }
+
+  #delivery-activity-dialog .delivery-activity-controls {
+    display: none !important;
+  }
+
+  #delivery-activity-dialog #delivery-activity-heading {
+    display: none;
+  }
+
+  #delivery-activity-dialog #delivery-activity-printable,
+  #delivery-activity-dialog #delivery-activity-printable * {
+    color: #000;
+    background: #fff;
+  }
+
+  #delivery-activity-dialog #delivery-activity-table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 9pt;
+  }
+
+  #delivery-activity-dialog #delivery-activity-table thead {
+    display: table-header-group;
+  }
+
+  #delivery-activity-dialog #delivery-activity-table th,
+  #delivery-activity-dialog #delivery-activity-table td {
+    border: 1px solid #000;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  #delivery-activity-dialog #delivery-activity-table tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+
 .deliveries-page {
   width: min(calc(100% - 24px), 1920px);
   max-width: none;
@@ -4047,8 +4390,78 @@ tbody tr.delivery-address-urgent-row:hover {
   padding: clamp(10px, 1.5vw, 24px);
 }
 
+#delivery-requests-card .table-wrap.delivery-row-exit-active {
+  overflow-x: hidden;
+}
+
+#delivery-requests-card #deliveries-table tr[data-row-view] {
+  cursor: pointer;
+}
+
+#delivery-requests-card #deliveries-table tr[data-row-view]:hover > td {
+  background: #fafbfd;
+}
+
+#delivery-requests-card #deliveries-table tr[data-row-view]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+#delivery-requests-card #deliveries-table tr[data-row-view]:focus-visible > td {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+#delivery-requests-card #deliveries-table tr.row-exit-right > td {
+  transition: transform 350ms ease-in, opacity 350ms ease-in;
+  transform: translateX(110%);
+  opacity: 0;
+}
+
+#delivery-requests-card #deliveries-table tr.row-exit-right {
+  pointer-events: none;
+}
+
+#delivery-requests-card #deliveries-table tr.row-collapse {
+  transition: height 200ms ease-in;
+}
+
+#delivery-requests-card #deliveries-table tr.row-collapse > td {
+  height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-top-width: 0 !important;
+  border-bottom-width: 0 !important;
+  overflow: hidden;
+  font-size: 0;
+  line-height: 0;
+}
+
+#delivery-requests-card #deliveries-table tr.row-collapse > td > * {
+  max-height: 0;
+  overflow: hidden;
+}
+
+#delivery-requests-card #deliveries-table tr.row-status-flash > td {
+  animation: delivery-row-status-flash 600ms ease-out;
+}
+
+@keyframes delivery-row-status-flash {
+  from { background-color: #e4f6ee; }
+  to { background-color: transparent; }
+}
+
 #delivery-requests-card .table-wrap {
   padding: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #delivery-requests-card #deliveries-table tr.row-exit-right > td,
+  #delivery-requests-card #deliveries-table tr.row-collapse,
+  #delivery-requests-card #deliveries-table tr.row-status-flash > td {
+    transition: none;
+    animation: none;
+  }
 }
 
 #deliveries-table.delivery-page-table {
@@ -4546,5 +4959,174 @@ body.status-board-display-mode .status-board-page {
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: row;
     overflow: visible;
+  }
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html:has(.deliveries-page),
+body:has(.deliveries-page) {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body:has(.deliveries-page) #app-header,
+body:has(.deliveries-page) .deliveries-page {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+body:has(.deliveries-page) #app-header,
+body:has(.deliveries-page) .deliveries-page > *,
+#delivery-requests-card,
+#delivery-requests-card > *,
+#delivery-filter-bar,
+#delivery-filter-bar > *,
+#delivery-role-status-chips,
+#delivery-branding-filter-row,
+#delivery-branding-filter-chips,
+#delivery-requests-card .toolbar,
+#delivery-requests-card .delivery-filter-summary {
+  min-width: 0;
+  max-width: 100%;
+}
+
+body:has(.deliveries-page) .topbar > * {
+  min-width: 0;
+}
+
+body:has(.deliveries-page) .topbar .top-actions {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+#delivery-requests-card input,
+#delivery-requests-card select {
+  max-width: 100%;
+}
+
+#delivery-requests-card .toolbar {
+  flex-wrap: wrap;
+}
+
+#delivery-search {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#delivery-role-status-chips,
+#delivery-branding-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
+
+#delivery-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+#delivery-filter-bar > label {
+  flex: 1 1 160px;
+}
+
+#delivery-filter-bar .delivery-date-range {
+  flex: 1 1 240px;
+}
+
+#delivery-filter-bar .delivery-date-range label {
+  min-width: 0;
+}
+
+#delivery-filter-bar .delivery-filter-actions {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#delivery-requests-card .table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+#deliveries-table {
+  width: 100%;
+  max-width: none;
+}
+
+#deliveries-table th,
+#deliveries-table td {
+  min-width: 0;
+  padding: 8px;
+}
+
+#deliveries-table td {
+  white-space: normal;
+}
+
+#deliveries-table th:last-child,
+#deliveries-table td:last-child {
+  width: 10%;
+}
+
+@media (max-width: 767px) {
+  #deliveries-table.delivery-page-table tbody td {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  #deliveries-table.delivery-page-table tbody td::before {
+    flex: 0 0 34%;
+    max-width: 34%;
+    margin-bottom: 0;
+  }
+
+  #deliveries-table.delivery-page-table tbody td {
+    overflow-wrap: break-word;
+  }
+
+  #deliveries-table.delivery-page-table .delivery-status-red,
+  #deliveries-table.delivery-page-table .delivery-status-orange,
+  #deliveries-table.delivery-page-table .delivery-status-green {
+    white-space: nowrap;
+  }
+
+  #deliveries-table.delivery-page-table .delivery-table-actions {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #deliveries-table.delivery-page-table.delivery-salesperson-table .delivery-table-actions button,
+  #deliveries-table.delivery-page-table .delivery-table-actions button {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 88px;
+    min-height: 0;
+    height: auto;
+    padding: 8px 14px;
+    white-space: nowrap;
+  }
+
+  #deliveries-table.delivery-page-table .delivery-table-actions .dispatch-controls {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 }
