@@ -699,6 +699,62 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.delivery-so-format-hint {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.delivery-item-conflict-note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.delivery-item-conflict-note .is-hard {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.delivery-item-conflict-note .is-soft {
+  color: var(--muted);
+}
+
+.delivery-conflict-more {
+  min-height: 32px;
+  padding: 3px 7px;
+  color: var(--blue);
+  background: transparent;
+  text-decoration: underline;
+}
+
+.delivery-duplicate-dialog {
+  width: min(640px, calc(100% - 24px));
+}
+
+.delivery-duplicate-list {
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+}
+
+.delivery-duplicate-entry {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.delivery-duplicate-entry p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.delivery-duplicate-entry button {
+  margin-top: 8px;
+}
+
 .branding-mode-field {
   position: relative;
   display: grid;

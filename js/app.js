@@ -109,6 +109,13 @@ let activeRiderJobCount = 0;
 let deliveryItemsState = { initial: [], lines: [] };
 let deliveryEditId = null;
 let productionEditId = null;
+let deliveryItemCheckSequence = 0;
+let deliveryHardConflicts = [];
+let deliveryConflictLineIndex = 0;
+let deliverySoftWarningsSeen = new Set();
+let deliveryDuplicateDialog = null;
+let deliveryDuplicateReturnFocus = null;
+let deliveryDuplicateAcknowledge = [];
 let deliveryClientDefaults = { client: "", contacts: [], addresses: [] };
 let deliveryClientSuggestionsTimer = null;
 let deliveryAutofilledContactName = "";
@@ -1688,43 +1695,48 @@ function hasSoNumber(value) {
   return String(value ?? "").trim().replace(/^SO-/i, "").trim().length > 0;
 }
 
-function protectSoNumberInput(input) {
-  const updateValidity = () => {
-    if (!/^SO-/i.test(input.value)) input.value = `${SO_NUMBER_PREFIX}${input.value}`;
-    else input.value = `${SO_NUMBER_PREFIX}${input.value.slice(3)}`;
-    input.setCustomValidity(hasSoNumber(input.value) ? "" : "Enter an SO number after SO-.");
-  };
-  input.addEventListener("focus", () => {
-    if (/^SO-/i.test(input.value)) input.setSelectionRange(3, 3);
+function normalizeSoToken(value) {
+  const original = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!original) return "";
+  const compact = original.toUpperCase().replace(/[\s._-]/g, "").replace(/^SO/, "");
+  const match = compact.match(/^([A-Z]?)(\d+)([A-Z]{0,2})$/);
+  return match
+    ? `SO-${match[1]}${match[2]}${match[3] ? `-${match[3]}` : ""}`
+    : original.toUpperCase();
+}
+
+function normalizeSoNumber(value) {
+  const seen = new Set();
+  return String(value ?? "").split(",").map((token) => normalizeSoToken(token))
+    .filter((token) => token && !seen.has(token) && seen.add(token)).join(", ");
+}
+
+function soTokenNeedsFormat(value) {
+  const token = String(value ?? "").trim();
+  if (!token || /^SO-?$/i.test(token)) return false;
+  const compact = token.toUpperCase().replace(/[\s._-]/g, "").replace(/^SO/, "");
+  return !/^([A-Z]?)(\d+)([A-Z]{0,2})$/.test(compact);
+}
+
+function deliveryItemKey(value) {
+  return String(value ?? "").toLowerCase().trim().replace(/&/g, "and")
+    .replace(/[^a-z0-9 ]/g, "").split(/\s+/).filter(Boolean).map((word) => {
+      if (word.endsWith("ies")) return `${word.slice(0, -3)}y`;
+      if (/(ches|shes|sses|xes|zes)$/.test(word)) return word.slice(0, -2);
+      if (word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
+      return word;
+    }).join("");
+}
+
+function deliveryLinePairs(lines) {
+  return lines.flatMap((line, lineIndex) => {
+    const itemName = String(line.item_name ?? "").trim();
+    const key = deliveryItemKey(itemName);
+    if (!key) return [];
+    return normalizeSoNumber(line.so_number).split(", ").filter(Boolean)
+        .filter(hasSoNumber)
+        .map((so) => ({ so, item_name: itemName, item_key: key, lineIndex }));
   });
-  input.addEventListener("click", () => {
-    if (/^SO-/i.test(input.value) && input.selectionStart < 3) input.setSelectionRange(3, 3);
-  });
-  input.addEventListener("keydown", (event) => {
-    if (!/^SO-/i.test(input.value)) return;
-    const start = input.selectionStart;
-    const end = input.selectionEnd;
-    if (event.key === "Home" || event.key === "ArrowLeft" && start <= 3
-      || event.key === "Backspace" && start === end && start <= 3
-      || event.key === "Backspace" && start < 3
-      || event.key === "Delete" && start < 3
-      || event.key.length === 1 && !event.ctrlKey && !event.metaKey && start < 3) {
-      event.preventDefault();
-      input.setSelectionRange(3, 3);
-    }
-  });
-  input.addEventListener("paste", (event) => {
-    event.preventDefault();
-    const pasted = event.clipboardData.getData("text").replace(/^SO-/i, "");
-    const start = Math.max(input.selectionStart, 3);
-    const end = Math.max(input.selectionEnd, 3);
-    input.value = `${SO_NUMBER_PREFIX}${input.value.slice(3, start)}${pasted}${input.value.slice(end)}`;
-    const caret = start + pasted.length;
-    input.setSelectionRange(caret, caret);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  input.addEventListener("input", updateValidity);
-  updateValidity();
 }
 
 function requestFormMarkup(row = null) {
@@ -3591,13 +3603,32 @@ function renderItemLineEditor() {
           label.append(datalist);
         }
       }
-      if (name === "so_number") protectSoNumberInput(input);
       input.addEventListener("input", () => {
         line[name] = input.value;
         if (name === "address") deliveryAutofilledAddressLines.delete(line);
         input.classList.remove("field-error");
+        if (name === "so_number" || name === "item_name") {
+          clearDeliveryItemConflictState();
+          if (name === "so_number") updateSoFormatHint(input, line);
+        }
       });
       label.append(input);
+      if (name === "so_number") {
+        const formatHint = document.createElement("small");
+        formatHint.className = "delivery-so-format-hint";
+        label.append(formatHint);
+        updateSoFormatHint(input, line);
+        input.addEventListener("blur", () => {
+          line.so_number = normalizeSoNumber(input.value);
+          input.value = line.so_number;
+          updateSoFormatHint(input, line);
+          void checkDeliveryItemPairs(deliveryItemsState.lines, input);
+        });
+      } else if (name === "item_name") {
+        input.addEventListener("blur", () => {
+          void checkDeliveryItemPairs(deliveryItemsState.lines, input);
+        });
+      }
       row.append(label);
     }
     if (productionEntry || deliveryEditId || line.goods_status) {
@@ -3616,12 +3647,16 @@ function renderItemLineEditor() {
       label.append(select);
       row.append(label);
     }
+    const issue = document.createElement("small");
+    issue.className = "delivery-item-conflict-note";
+    row.append(issue);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "danger";
     remove.dataset.shortcutRemove = "";
     remove.textContent = "Remove";
     remove.addEventListener("click", () => {
+      clearDeliveryItemConflictState();
       if (deliveryItemsState.lines.length === 1) {
         deliveryItemsState.lines[0] = { so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" };
       } else {
@@ -3632,6 +3667,315 @@ function renderItemLineEditor() {
     row.append(remove);
     root.append(row);
   });
+}
+
+function updateSoFormatHint(input, line) {
+  const hint = input.parentElement.querySelector(".delivery-so-format-hint");
+  if (!hint) return;
+  const invalid = String(line.so_number ?? "").split(",").some(soTokenNeedsFormat);
+  hint.textContent = invalid ? "SO number format is unusual; it will be saved as entered." : "";
+  hint.hidden = !invalid;
+}
+
+function updateDeliverySubmitState() {
+  const button = document.querySelector("#delivery-request-form [type='submit']");
+  if (button) button.disabled = deliveryHardConflicts.length > 0;
+}
+
+function clearDeliveryItemConflictState() {
+  deliveryItemCheckSequence += 1;
+  deliveryHardConflicts = [];
+  deliverySoftWarningsSeen = new Set();
+  document.querySelectorAll("#delivery-item-lines .delivery-item-conflict-note").forEach((note) => {
+    note.replaceChildren();
+    note.hidden = true;
+  });
+  updateDeliverySubmitState();
+}
+
+function renderDeliveryLineIssue(entries, note) {
+  const issue = note.querySelector(".delivery-item-conflict-note");
+  issue.replaceChildren();
+  issue.hidden = !entries?.length;
+  if (!entries?.length) return;
+  entries.forEach((entry, index) => {
+    if (index) issue.append(document.createElement("br"));
+    const text = document.createElement("span");
+    text.className = entry.conflict_type === "hard" ? "is-hard" : "is-soft";
+    text.textContent = entry.conflict_type === "hard"
+      ? `Already filled${entry.sr ? `, see ${entry.sr}` : " on this request"}. `
+      : `${entry.reason || "Similar item on another delivery."} `;
+    issue.append(text);
+    if (entry.can_view) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "delivery-conflict-more";
+      more.textContent = "See more";
+      more.addEventListener("click", () => showDeliveryConflictDialog([entry]));
+      issue.append(more);
+    }
+  });
+}
+
+function ensureDeliveryDuplicateDialog() {
+  if (deliveryDuplicateDialog?.isConnected) return deliveryDuplicateDialog;
+  const dialog = document.createElement("dialog");
+  dialog.className = "line-editor-dialog delivery-duplicate-dialog";
+  dialog.setAttribute("aria-labelledby", "delivery-duplicate-title");
+  const content = document.createElement("div");
+  content.className = "line-dialog-content";
+  const heading = document.createElement("h2");
+  heading.id = "delivery-duplicate-title";
+  heading.textContent = "Delivery item check";
+  const message = document.createElement("p");
+  message.className = "delivery-duplicate-message";
+  const list = document.createElement("div");
+  list.className = "delivery-duplicate-list";
+  const actions = document.createElement("div");
+  actions.className = "dialog-actions";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "primary";
+  close.textContent = "Close";
+  close.addEventListener("click", () => dialog.close());
+  actions.append(close);
+  content.append(heading, message, list, actions);
+  dialog.append(content);
+  dialog.addEventListener("close", () => {
+    deliveryDuplicateAcknowledge.forEach((key) => deliverySoftWarningsSeen.add(key));
+    deliveryDuplicateAcknowledge = [];
+    const focus = deliveryDuplicateReturnFocus;
+    deliveryDuplicateReturnFocus = null;
+    if (typeof focus === "function") focus();
+    else if (focus?.isConnected) focus.focus();
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  document.body.append(dialog);
+  deliveryDuplicateDialog = dialog;
+  return dialog;
+}
+
+async function openDuplicateDelivery(conflict, dialog, trigger) {
+  dialog.close();
+  if (!conflict.delivery_id) return;
+  let result;
+  try {
+    result = await client.from(deliveryReadTable())
+      .select(deliverySelect).eq("id", conflict.delivery_id).maybeSingle();
+  } catch (error) {
+    toast(`Could not open the existing delivery: ${error.message || "unknown error"}`, "error");
+    return;
+  }
+  const { data, error } = result;
+  if (error) {
+    toast(`Could not open the existing delivery: ${error.message || "unknown error"}`, "error");
+    return;
+  }
+  if (!data) {
+    toast("The existing delivery is not available to your account.", "error");
+    return;
+  }
+  await openDeliveryView(data, trigger);
+}
+
+async function showDuplicateSaveConflict(so, itemKey, sr, returnFocus) {
+  let conflict = {
+    conflict_type: "hard",
+    so,
+    item_key: itemKey,
+    sr,
+    reason: "Already recorded",
+    can_view: false
+  };
+  if (sr === "SAME_REQUEST") {
+    showDeliveryConflictDialog([conflict], null, returnFocus);
+    return;
+  }
+  let result;
+  try {
+    result = await client.from(deliveryReadTable())
+      .select(deliverySelect).eq("sr", sr).maybeSingle();
+  } catch (error) {
+    toast(`Could not load the existing delivery summary: ${error.message || "unknown error"}`, "error");
+  }
+  const { data, error } = result || {};
+  if (error) {
+    toast(`Could not load the existing delivery summary: ${error.message || "unknown error"}`, "error");
+  } else if (data) {
+    conflict = {
+      ...conflict,
+      delivery_id: data.id,
+      client_name: data.client_name,
+      delivery_date: data.delivery_date,
+      dispatch_status: data.dispatch_status,
+      salesperson_name: deliverySalespersonNames.get(data.salesperson_id || data.created_by) || "",
+      can_view: true
+    };
+  } else {
+    let summaryResult;
+    try {
+      summaryResult = await client.rpc("check_so_items", {
+        p_pairs: [{ so, item_name: itemKey, client_name: "" }],
+        p_exclude_id: deliveryEditId || productionEditId || null
+      });
+    } catch (summaryError) {
+      toast(`Could not load the existing delivery summary: ${summaryError.message || "unknown error"}`, "error");
+    }
+    const { data: summaries, error: summaryError } = summaryResult || {};
+    if (summaryError) {
+      toast(`Could not load the existing delivery summary: ${summaryError.message || "unknown error"}`, "error");
+    } else {
+      const summary = (summaries || []).find((entry) => entry.conflict_type === "hard" && entry.sr === sr);
+      if (summary) conflict = summary;
+    }
+  }
+  showDeliveryConflictDialog([conflict], null, returnFocus);
+}
+
+function showDeliveryConflictDialog(conflicts, focusTarget = null, returnFocus = focusTarget) {
+  const dialog = ensureDeliveryDuplicateDialog();
+  const message = dialog.querySelector(".delivery-duplicate-message");
+  const list = dialog.querySelector(".delivery-duplicate-list");
+  message.textContent = conflicts.some((conflict) => conflict.conflict_type === "hard")
+    ? "This SO and item combination is already recorded. Update the item details before saving."
+    : "Review similar delivery items before saving.";
+  list.replaceChildren();
+  conflicts.forEach((conflict) => {
+    const entry = document.createElement("section");
+    entry.className = "delivery-duplicate-entry";
+    const title = document.createElement("strong");
+    title.textContent = `${conflict.so || "SO —"} · ${conflict.item_key || "item —"}`;
+    const summary = document.createElement("p");
+    summary.textContent = [
+      conflict.sr,
+      conflict.client_name,
+      conflict.delivery_date,
+      conflict.dispatch_status,
+      conflict.salesperson_name
+    ].filter(Boolean).join(" · ") || (conflict.reason || "Same request");
+    entry.append(title, summary);
+    if (conflict.can_view && conflict.delivery_id) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "secondary";
+      more.textContent = "See more";
+      more.addEventListener("click", () => {
+        deliveryDuplicateReturnFocus = null;
+        void openDuplicateDelivery(conflict, dialog, more);
+      });
+      entry.append(more);
+    }
+    list.append(entry);
+  });
+  deliveryDuplicateAcknowledge = conflicts.filter((conflict) => conflict.conflict_type === "soft")
+    .map(softConflictKey);
+  deliveryDuplicateReturnFocus = returnFocus;
+  if (!dialog.open) dialog.showModal();
+  dialog.querySelector(".dialog-actions button")?.focus();
+}
+
+function softConflictKey(conflict) {
+  const clientName = document.querySelector("#delivery-request-form")?.elements.client_name.value.trim().toLowerCase() || "";
+  return `${clientName}\u0000${conflict.so}\u0000${conflict.item_key}\u0000${conflict.reason || ""}`;
+}
+
+async function checkDeliveryItemPairs(lines, focusTarget = null, returnFocus = focusTarget, showSoftPopup = true, blockOnSoft = false) {
+  const checkId = ++deliveryItemCheckSequence;
+  const pairs = deliveryLinePairs(lines);
+  const lineIssues = new Map();
+  const hard = [];
+  const localPairs = new Map();
+  pairs.forEach((pair) => {
+    const key = `${pair.so}\u0000${pair.item_key}`;
+    const previous = localPairs.get(key);
+    if (previous) {
+      const conflict = {
+        conflict_type: "hard",
+        so: pair.so,
+        item_key: pair.item_key,
+        reason: "same_request",
+        can_view: false
+      };
+      hard.push(conflict);
+      [previous.lineIndex, pair.lineIndex].forEach((lineIndex) => {
+        const issues = lineIssues.get(lineIndex) || [];
+        if (!issues.some((entry) => entry.conflict_type === "hard" && entry.so === pair.so && entry.item_key === pair.item_key)) {
+          issues.push(conflict);
+          lineIssues.set(lineIndex, issues);
+        }
+      });
+    } else {
+      localPairs.set(key, pair);
+    }
+  });
+
+  if (pairs.length) {
+    const uniquePairs = [...new Map(pairs.map((pair) => [
+      `${pair.so}\u0000${pair.item_key}`,
+      { so: pair.so, item_name: pair.item_name, client_name: document.querySelector("#delivery-request-form").elements.client_name.value.trim() }
+    ])).values()];
+    let result;
+    try {
+      result = await client.rpc("check_so_items", {
+        p_pairs: uniquePairs,
+        p_exclude_id: deliveryEditId || productionEditId || null
+      });
+    } catch (error) {
+      if (checkId === deliveryItemCheckSequence) {
+        toast(`Could not check delivery items: ${error.message || "unknown error"}`, "error");
+      }
+      return false;
+    }
+    const { data, error } = result;
+    if (checkId !== deliveryItemCheckSequence) return false;
+    if (error) {
+      toast(`Could not check delivery items: ${error.message || "unknown error"}`, "error");
+      return false;
+    }
+    (data || []).forEach((conflict) => {
+      const matchingPairs = pairs.filter((item) => item.so === conflict.so && item.item_key === conflict.item_key);
+      if (!matchingPairs.length) return;
+      matchingPairs.forEach((pair) => {
+        const issues = lineIssues.get(pair.lineIndex) || [];
+        issues.push(conflict);
+        lineIssues.set(pair.lineIndex, issues);
+      });
+      if (conflict.conflict_type === "hard") hard.push(conflict);
+    });
+  }
+  if (checkId !== deliveryItemCheckSequence) return false;
+
+  deliveryHardConflicts = hard;
+  lines.forEach((line, index) => {
+    const issues = lineIssues.get(index) || [];
+    const row = document.querySelectorAll("#delivery-item-lines .delivery-item-row")[index];
+    if (row) renderDeliveryLineIssue(issues, row);
+  });
+  updateDeliverySubmitState();
+  if (hard.length) {
+    const uniqueHard = [...new Map(hard.map((conflict) => [
+      `${conflict.so}\u0000${conflict.item_key}`, conflict
+    ])).values()];
+    const conflictingPair = pairs.find((pair) => pair.so === uniqueHard[0].so && pair.item_key === uniqueHard[0].item_key);
+    deliveryConflictLineIndex = conflictingPair?.lineIndex ?? 0;
+    const conflictingInput = document.querySelectorAll("#delivery-item-lines .delivery-item-row [name='so_number']")[deliveryConflictLineIndex];
+    showDeliveryConflictDialog(uniqueHard, conflictingInput || focusTarget,
+      returnFocus === focusTarget ? conflictingInput || focusTarget : returnFocus);
+    return false;
+  }
+  const soft = [...lineIssues.values()].flat().filter((conflict) => conflict.conflict_type === "soft");
+  const unseenSoft = soft.filter((conflict) => !deliverySoftWarningsSeen.has(softConflictKey(conflict)));
+  if (unseenSoft.length && showSoftPopup) {
+    const conflictingPair = pairs.find((pair) => pair.so === unseenSoft[0].so && pair.item_key === unseenSoft[0].item_key);
+    deliveryConflictLineIndex = conflictingPair?.lineIndex ?? 0;
+    const conflictingInput = document.querySelectorAll("#delivery-item-lines .delivery-item-row [name='so_number']")[deliveryConflictLineIndex];
+    showDeliveryConflictDialog(unseenSoft, conflictingInput || focusTarget,
+      returnFocus === focusTarget ? conflictingInput || focusTarget : returnFocus);
+    if (blockOnSoft) return false;
+  }
+  return true;
 }
 
 function openDeliveryItems() {
@@ -3689,6 +4033,7 @@ async function submitDelivery(event) {
   const brandingModeValue = String(payload.branding_modes || "").trim();
   const items = deliveryItemsMarkup(parsedItems).map((line) => ({
     ...line,
+    so_number: normalizeSoNumber(line.so_number),
     branding_mode: brandingModeValue || null
   }));
   if (productionEntry) {
@@ -3716,6 +4061,12 @@ async function submitDelivery(event) {
     toast("Choose an available one-hour delivery slot.", "error");
     return;
   }
+  const returnToConflict = () => {
+    openDeliveryItems();
+    document.querySelectorAll("#delivery-item-lines .delivery-item-row")[deliveryConflictLineIndex]
+      ?.querySelector('[name="so_number"]')?.focus();
+  };
+  if (!await checkDeliveryItemPairs(items, null, returnToConflict, true, true)) return;
   setBusy(button, true, "Requesting…");
   try {
     const values = {
@@ -3776,7 +4127,20 @@ async function submitDelivery(event) {
       toast(`Saved, but the delivery list could not refresh: ${error.message || "unknown error"}`, "error");
     }
   } catch (error) {
-    toast(error.message || "Could not save the delivery request.", "error");
+    const duplicate = String(error.message || "").match(/^DUPLICATE_SO_ITEM:(.*):([^:]*):([^:]*)$/);
+    if (duplicate) {
+      const conflictIndex = items.findIndex((line) => normalizeSoNumber(line.so_number).split(", ")
+        .includes(duplicate[1]) && deliveryItemKey(line.item_name) === duplicate[2]);
+      deliveryConflictLineIndex = Math.max(0, conflictIndex);
+      const returnToConflict = () => {
+        openDeliveryItems();
+        document.querySelectorAll("#delivery-item-lines .delivery-item-row")[deliveryConflictLineIndex]
+          ?.querySelector('[name="so_number"]')?.focus();
+      };
+      await showDuplicateSaveConflict(duplicate[1], duplicate[2], duplicate[3], returnToConflict);
+    } else {
+      toast(error.message || "Could not save the delivery request.", "error");
+    }
   } finally {
     setBusy(button, false);
   }
@@ -5044,6 +5408,7 @@ async function initDeliveries() {
     contactNumberInput.addEventListener("input", () => { contactNumberEdited = true; });
     clientInput.addEventListener("input", () => {
       if (deliveryEditId || productionEditId) return;
+      clearDeliveryItemConflictState();
       if (deliveryClientDefaults.client && deliveryClientDefaults.client !== clientInput.value.trim()) {
         clearClientDefaults();
       }
@@ -5130,6 +5495,7 @@ async function initDeliveries() {
     form.addEventListener("reset", () => {
       clearTimeout(deliveryClientSuggestionsTimer);
       clearClientDefaults();
+      clearDeliveryItemConflictState();
       clientSuggestions.replaceChildren();
       contactNameEdited = false;
       contactNumberEdited = false;
@@ -5182,11 +5548,19 @@ async function initDeliveries() {
     });
   }
   document.querySelector("#delivery-item-add").addEventListener("click", () => {
+    clearDeliveryItemConflictState();
     deliveryItemsState.lines.push({ so_number: SO_NUMBER_PREFIX, item_name: "", quantity: "", address: "", goods_status: "" });
     renderItemLineEditor();
     document.querySelector("#delivery-item-lines").lastElementChild?.querySelector("input")?.focus();
   });
-  document.querySelector("#delivery-item-save").addEventListener("click", () => {
+  document.querySelector("#delivery-item-save").addEventListener("click", async () => {
+    deliveryItemsState.lines.forEach((line) => {
+      line.so_number = normalizeSoNumber(line.so_number);
+    });
+    document.querySelectorAll("#delivery-item-lines [name='so_number']").forEach((input, index) => {
+      input.value = deliveryItemsState.lines[index]?.so_number || "";
+      updateSoFormatHint(input, deliveryItemsState.lines[index] || {});
+    });
     const lines = deliveryItemsMarkup(deliveryItemsState.lines);
     const productionEntry = isProductionStoreMode() && !deliveryEditId;
     clearDeliveryItemErrors();
@@ -5213,6 +5587,7 @@ async function initDeliveries() {
       firstInvalid.focus();
       return;
     }
+    if (!await checkDeliveryItemPairs(lines, null, null, true, true)) return;
     const serialized = JSON.stringify(lines);
     document.querySelector('[name="items"]').value = serialized;
     document.querySelector("#delivery-items-open").textContent = lines.map((line) =>
