@@ -62,11 +62,8 @@ const DELIVERY_ROLE_STATUS_LABELS = {
 };
 const ROUTE_STATUS_CHIPS = [
   { value: "active", label: "Active", style: "pending" },
-  { value: "Not started", label: "Not started", style: "partial" },
-  { value: "Started", label: "Started", style: "ready" },
   { value: "In progress", label: "In progress", style: "ready" },
   { value: "Finished", label: "Finished", style: "ready" },
-  { value: "Declined", label: "Declined", style: "not-ready" },
   { value: "", label: "All", style: "all" }
 ];
 let session;
@@ -154,6 +151,8 @@ let riderQueryToken = 0;
 let riderUsers = [];
 let requesterNames = new Map();
 let routeRiderTotalCount = 0;
+let routeActivityTileFilter = null;
+let routeActivityRows = [];
 const ROUTE_RIDER_FILTERS_KEY = "routeRiderFilters";
 let activeRiderJobCount = 0;
 let deliveryItemsState = { initial: [], lines: [] };
@@ -1321,6 +1320,18 @@ async function activityCount(table, period, card) {
   return count || 0;
 }
 
+async function activityRows(table, period, card, columns) {
+  const rows = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await activityQuery(table, period, card, columns)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + 999);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if ((data || []).length < 1000) return rows;
+  }
+}
+
 async function deliveryActivityRows(period, card) {
   const rows = [];
   const columns = "id,created_by,salesperson_id,client_name,items,delivery_date,production_status,dispatch_status,ready_at,dispatched_at";
@@ -1354,6 +1365,17 @@ function renderDeliveryActivityRows(rows) {
   }).join("");
 }
 
+function renderActivityReport({ title, range, total, printed, message, rows }) {
+  document.querySelector("#delivery-activity-heading").textContent = title;
+  document.querySelector("#delivery-activity-title").textContent = title;
+  document.querySelector("#delivery-activity-range").textContent = range;
+  document.querySelector("#delivery-activity-total").textContent = `Total: ${total}`;
+  document.querySelector("#delivery-activity-printed").textContent = `Printed on ${printed}`;
+  document.querySelector("#delivery-activity-message").textContent = message;
+  document.querySelector("#delivery-activity-rows").innerHTML = rows;
+  document.querySelector("#delivery-activity-table").classList.toggle("hidden", !rows);
+}
+
 async function openDeliveryActivity(card, period) {
   const dialog = document.querySelector("#delivery-activity-dialog");
   const requestId = Number(dialog.dataset.requestId || 0) + 1;
@@ -1361,28 +1383,32 @@ async function openDeliveryActivity(card, period) {
   const weekDates = activityPeriodType(period) === "week" ? [...new Set(period.dates || [])] : [];
   const periodTitle = weekDates.length ? `${weekDates.length} selected days` : activityPeriodSummary(period, true);
   const title = `${card.label}: ${periodTitle}`;
-  document.querySelector("#delivery-activity-heading").textContent = title;
-  document.querySelector("#delivery-activity-title").textContent = title;
-  document.querySelector("#delivery-activity-range").textContent = activityPeriodDetail(period);
-  document.querySelector("#delivery-activity-total").textContent = "Total: 0";
-  document.querySelector("#delivery-activity-printed").textContent = `Printed on ${localDateTime(new Date())}`;
-  document.querySelector("#delivery-activity-message").textContent = "Loading deliveries…";
-  document.querySelector("#delivery-activity-rows").replaceChildren();
-  document.querySelector("#delivery-activity-table").classList.add("hidden");
+  const range = activityPeriodDetail(period);
+  const printed = localDateTime(new Date());
+  renderActivityReport({ title, range, total: 0, printed, message: "Loading deliveries…", rows: "" });
   if (!dialog.open) dialog.showModal();
   try {
     const rows = await deliveryActivityRows(period, card);
     if (!dialog.open || Number(dialog.dataset.requestId) !== requestId
       || JSON.stringify(deliveryActivityPeriod) !== JSON.stringify(period)) return;
-    document.querySelector("#delivery-activity-total").textContent = `Total: ${rows.length}`;
-    document.querySelector("#delivery-activity-rows").innerHTML = renderDeliveryActivityRows(rows);
-    document.querySelector("#delivery-activity-table").classList.toggle("hidden", !rows.length);
-    document.querySelector("#delivery-activity-message").textContent =
-      rows.length ? "" : "No deliveries for this period.";
+    renderActivityReport({
+      title,
+      range,
+      total: rows.length,
+      printed,
+      message: rows.length ? "" : "No deliveries for this period.",
+      rows: renderDeliveryActivityRows(rows)
+    });
   } catch {
     if (!dialog.open || Number(dialog.dataset.requestId) !== requestId) return;
-    document.querySelector("#delivery-activity-table").classList.add("hidden");
-    document.querySelector("#delivery-activity-message").textContent = "Could not load deliveries for this period.";
+    renderActivityReport({
+      title,
+      range,
+      total: 0,
+      printed,
+      message: "Could not load deliveries for this period.",
+      rows: ""
+    });
   }
 }
 
@@ -1390,7 +1416,11 @@ async function renderPeriodSummary(rootId, periodId, table, cards) {
   const root = document.querySelector(`#${rootId}`);
   const period = periodId === "delivery-period"
     ? deliveryActivityPeriod : document.querySelector(`#${periodId}`)?.value || "day";
-  const counts = await Promise.all(cards.map((card) => activityCount(table, period, card)));
+  const counts = rootId === "route-tallies"
+    ? (routeActivityRows = await Promise.all(cards.map((card) => activityRows(table, period, card,
+      "id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,details,assigned_rider,rider_time,rider_time_end,status"))))
+      .map((rows) => rows.length)
+    : await Promise.all(cards.map((card) => activityCount(table, period, card)));
   const periodLabel = typeof period === "object" && activityPeriodIsCustom(period)
     ? activityPeriodSummary(period) : ({ day: "today", week: "this week", month: "this month" })[activityPeriodType(period)] || period;
   root.innerHTML = tallyMarkup(cards.map((card, index) => [
@@ -6487,6 +6517,8 @@ function restoreRouteRiderFilters() {
   if (typeof saved.rider === "string") routeRiderChipFilter = saved.rider;
   if (ROUTE_STATUS_CHIPS.some(({ value }) => value === saved.status)) {
     routeStatusChipFilter = saved.status;
+  } else if (["Not started", "Started", "Declined", "not-started", "started", "declined"].includes(saved.status)) {
+    routeStatusChipFilter = "active";
   }
 }
 
@@ -6639,7 +6671,18 @@ function renderRouteRiderChips(rows) {
 function routeStatusFilterMatches(row, value) {
   if (!value) return true;
   if (value === "active") return !["Finished", "Declined"].includes(row.status);
+  if (value === "In progress") return ["Started", "In progress"].includes(row.status);
   return row.status === value;
+}
+
+function renderRouteActivityRows(rows) {
+  return rows.map((row) => {
+    const salesperson = requesterNames.get(row.created_by) || "Salesperson";
+    const rider = row.assigned_rider
+      ? riderUsers.find((user) => user.id === row.assigned_rider)?.full_name || "Assigned rider"
+      : "Not assigned";
+    return `<tr><td>${escapeHtml(salesperson)}</td><td>${escapeHtml(row.client_name || "—")}<br><small>${escapeHtml(row.contact_name || "—")} · ${escapeHtml(row.contact_number || "—")}</small></td><td>${escapeHtml(row.address || "—")}<br><small>${escapeHtml(row.details || "")}</small></td><td>${escapeHtml(rider)}</td><td>${escapeHtml(riderSlotText(row))}</td><td>${escapeHtml(row.status)}</td></tr>`;
+  }).join("");
 }
 
 function renderRouteStatusChips(rows) {
@@ -6862,13 +6905,82 @@ async function initRiders() {
     await initializeRouteRiderFilters();
   }
   if (routeAdmin) {
-    bindPeriodSummary("route-period", () => renderPeriodSummary("route-tallies", "route-period", "rider_jobs", [
+    const tiles = document.querySelector("#route-tallies");
+    const routePeriod = document.querySelector("#route-period");
+    const dialog = document.querySelector("#delivery-activity-dialog");
+    let routeActivityTileTrigger = null;
+    const cards = [
       { label: "Received", dateColumn: "created_at" },
       { label: "Assigned", dateColumn: "assigned_at" },
       { label: "In progress", dateColumn: "started_at" },
       { label: "Finished", dateColumn: "finished_at" },
       { label: "Declined", dateColumn: "declined_at" }
-    ]));
+    ];
+    const updateTileSelection = () => {
+      tiles.querySelectorAll(".delivery-activity-tile").forEach((tile, index) =>
+        tile.setAttribute("aria-pressed", String(routeActivityTileFilter === index)));
+    };
+    const renderRouteActivityReport = (index) => {
+      const card = cards[index];
+      if (!card) return;
+      const rows = routeActivityRows[index] || [];
+      renderActivityReport({
+        title: `${card.label}: ${activityPeriodSummary(routePeriod.value, true)}`,
+        range: activityPeriodDetail(routePeriod.value),
+        total: rows.length,
+        printed: localDateTime(new Date()),
+        message: rows.length ? "" : "No rider requests match these filters.",
+        rows: renderRouteActivityRows(rows)
+      });
+    };
+    const openFromTile = (event) => {
+      if (!(event.target instanceof Element)) return;
+      const tile = event.target.closest(".delivery-activity-tile");
+      if (!tile || !tiles.contains(tile)) return;
+      const index = Number(tile.dataset.routeActivityIndex);
+      const card = cards[index];
+      if (!card) return;
+      routeActivityTileFilter = index;
+      routeActivityTileTrigger = tile;
+      updateTileSelection();
+      renderRouteActivityReport(index);
+      if (!dialog.open) dialog.showModal();
+    };
+    tiles.addEventListener("click", openFromTile);
+    tiles.addEventListener("keydown", (event) => {
+      if ((event.key === "Enter" || event.key === " ") && event.target.matches(".delivery-activity-tile")) {
+        event.preventDefault();
+        event.target.click();
+      }
+    });
+    document.querySelectorAll("[data-delivery-activity-close]").forEach((button) =>
+      button.addEventListener("click", () => dialog.close()));
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      const focusTarget = routeActivityTileFilter === null
+        ? routeActivityTileTrigger
+        : tiles.querySelector(`[data-route-activity-index="${routeActivityTileFilter}"]`) || routeActivityTileTrigger;
+      routeActivityTileFilter = null;
+      updateTileSelection();
+      focusTarget?.focus();
+      routeActivityTileTrigger = null;
+    });
+    document.querySelector("#delivery-activity-print").addEventListener("click", () => window.print());
+    bindPeriodSummary("route-period", () => renderPeriodSummary("route-tallies", "route-period", "rider_jobs", cards).then(() => {
+      tiles.querySelectorAll(".stat-card").forEach((tile, index) => {
+        tile.classList.add("delivery-activity-tile");
+        tile.tabIndex = 0;
+        tile.setAttribute("role", "button");
+        tile.setAttribute("aria-haspopup", "dialog");
+        tile.dataset.routeActivityIndex = String(index);
+      });
+      updateTileSelection();
+      if (dialog.open && routeActivityTileFilter !== null) {
+        renderRouteActivityReport(routeActivityTileFilter);
+      }
+    }));
   } else if (canRequest) {
     bindPeriodSummary("rider-period", () => renderPeriodSummary("rider-tallies", "rider-period", "rider_jobs", [
       { label: "Requested", dateColumn: "created_at", filters: { created_by: profile.id } },

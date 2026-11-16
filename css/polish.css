@@ -3855,6 +3855,10 @@ tbody tr.delivery-address-urgent-row:hover {
   box-shadow: 0 0 0 2px var(--blue);
 }
 
+#route-tallies .delivery-activity-tile[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .delivery-activity-dialog {
   width: min(1200px, 96vw);
   max-width: 96vw;

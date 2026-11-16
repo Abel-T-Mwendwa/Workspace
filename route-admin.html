@@ -24,6 +24,33 @@
     <section class="panel hidden" id="rider-request-panel"></section>
     <section class="panel hidden" id="riders-list-panel"></section>
   </main>
+  <dialog id="delivery-activity-dialog" class="delivery-activity-dialog" aria-labelledby="delivery-activity-title">
+    <div class="delivery-activity-content">
+      <div class="section-heading delivery-activity-controls"><h2 id="delivery-activity-heading"></h2><button type="button" class="icon-button" data-delivery-activity-close aria-label="Close">×</button></div>
+      <div id="delivery-activity-printable">
+        <header class="delivery-activity-print-header">
+          <h2 id="delivery-activity-title"></h2>
+          <p id="delivery-activity-range"></p>
+          <p id="delivery-activity-total">Total: 0</p>
+          <p id="delivery-activity-printed"></p>
+        </header>
+        <p id="delivery-activity-message" role="status"></p>
+        <div class="delivery-activity-table-shell">
+          <div class="table-wrap">
+            <table id="delivery-activity-table">
+              <colgroup><col style="width:15%"><col style="width:21%"><col style="width:24%"><col style="width:16%"><col style="width:12%"><col style="width:12%"></colgroup>
+              <thead><tr><th>Salesperson</th><th>Client / Contact</th><th>Address</th><th>Rider</th><th>Rider time</th><th>Status</th></tr></thead>
+              <tbody id="delivery-activity-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions delivery-activity-controls">
+        <button type="button" class="secondary" id="delivery-activity-print">Print / Save as PDF</button>
+        <button type="button" class="quiet" data-delivery-activity-close>Close</button>
+      </div>
+    </div>
+  </dialog>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
   <script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
 </body>
