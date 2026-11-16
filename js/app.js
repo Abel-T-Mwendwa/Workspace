@@ -4657,6 +4657,7 @@ function openDeliveryEdit(row) {
   const form = document.querySelector("#delivery-request-form");
   const dialog = document.querySelector("#delivery-edit-dialog");
   deliveryEditId = row.id;
+  clearDeliveryItemConflictState();
   configureDeliveryForm(form);
   form.elements.client_name.value = row.client_name || "";
   form.elements.contact_name.value = row.contact_name || "";
@@ -4684,6 +4685,7 @@ function openProductionDeliveryEdit(row) {
   const form = document.querySelector("#delivery-request-form");
   if (!form.classList.contains("hidden") && !confirm("Discard the current unsaved delivery entry?")) return;
   productionEditId = row.id;
+  clearDeliveryItemConflictState();
   form.elements.salesperson_id.value = row.salesperson_id;
   form.elements.salesperson_id.disabled = true;
   setDeliveryBrandingSelection(form, deliveryBrandingModes(row));
@@ -6582,28 +6584,7 @@ function riderAssignmentControls(row) {
     `<option value="${slot.start}" data-end="${slot.end}">${escapeHtml(slot.label)}</option>`).join("");
   return `<div class="rider-assignment-control"><select data-rider-choice="${escapeHtml(row.id)}"><option value="">Choose rider</option>${riderOptions}</select>
     <select data-rider-slot="${escapeHtml(row.id)}"><option value="">Choose hourly slot</option>${slots}</select>
-    <small data-rider-warning="${escapeHtml(row.id)}" class="warning-text"></small>
     <button type="button" class="primary" data-rider-assign="${escapeHtml(row.id)}">Assign</button></div>`;
-}
-
-async function updateRiderWarning(rowId) {
-  const row = riderJobRows.find((item) => item.id === rowId);
-  const rider = document.querySelector(`[data-rider-choice="${CSS.escape(rowId)}"]`)?.value;
-  const slot = document.querySelector(`[data-rider-slot="${CSS.escape(rowId)}"]`);
-  const selected = slot?.selectedOptions[0];
-  const warning = document.querySelector(`[data-rider-warning="${CSS.escape(rowId)}"]`);
-  if (!row || !rider || !selected?.value) {
-    if (warning) warning.textContent = "";
-    return;
-  }
-  const { count, error } = await client.from("rider_jobs").select("id", { count: "exact", head: true })
-    .eq("assigned_rider", rider).eq("scheduled_date", row.scheduled_date)
-    .eq("rider_time", selected.value).neq("status", "Finished").neq("id", rowId);
-  if (error) {
-    toast(error.message || "Could not check rider availability.", "error");
-    return;
-  }
-  warning.textContent = count ? "Warning: this rider already has a job in this time slot." : "";
 }
 
 function renderRouteRiderChips(rows) {
@@ -6780,9 +6761,6 @@ function renderRiderJobs() {
   const roots = [routeView ? document.querySelector("#route-rider-rows") : null,
     showSalesView ? document.querySelector("#sales-rider-rows") : null].filter(Boolean);
   roots.forEach((root) => {
-    root.querySelectorAll("[data-rider-choice], [data-rider-slot]").forEach((select) => select.addEventListener("change", () => {
-      void updateRiderWarning(select.dataset.riderChoice || select.dataset.riderSlot);
-    }));
     root.querySelectorAll("[data-rider-assign]").forEach((button) => button.addEventListener("click", async () => {
       const id = button.dataset.riderAssign;
       const riderId = root.querySelector(`[data-rider-choice="${CSS.escape(id)}"]`).value;
