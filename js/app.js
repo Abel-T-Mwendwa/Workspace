@@ -159,6 +159,7 @@ let activeRiderJobCount = 0;
 let deliveryItemsState = { initial: [], lines: [] };
 let deliveryEditId = null;
 let productionEditId = null;
+let deliveryOriginalItemPairs = null;
 let deliveryItemCheckSequence = 0;
 let deliveryHardConflicts = [];
 let deliveryConflictLineIndex = 0;
@@ -1787,6 +1788,21 @@ function deliveryLinePairs(lines) {
         .filter(hasSoNumber)
         .map((so) => ({ so, item_name: itemName, item_key: key, lineIndex }));
   });
+}
+
+function snapshotDeliveryItemPairs(lines) {
+  const counts = new Map();
+  lines.forEach((line) => {
+    const itemName = String(line.item_name ?? "").trim().toLowerCase();
+    if (!itemName) return;
+    String(line.so_number ?? "").split(",").forEach((token) => {
+      const so = token.trim().toUpperCase();
+      if (!so || !hasSoNumber(so)) return;
+      const key = `${so}\u0000${itemName}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+  });
+  return counts;
 }
 
 function requestFormMarkup(row = null) {
@@ -4382,6 +4398,13 @@ function softConflictKey(conflict) {
 async function checkDeliveryItemPairs(lines, focusTarget = null, returnFocus = focusTarget, showSoftPopup = true, blockOnSoft = false) {
   const checkId = ++deliveryItemCheckSequence;
   const pairs = deliveryLinePairs(lines);
+  const currentPairCounts = new Map();
+  const checkPairs = pairs.filter((pair) => {
+    const key = `${pair.so.trim().toUpperCase()}\u0000${pair.item_name.trim().toLowerCase()}`;
+    const count = (currentPairCounts.get(key) || 0) + 1;
+    currentPairCounts.set(key, count);
+    return count > (deliveryOriginalItemPairs?.get(key) || 0);
+  });
   const lineIssues = new Map();
   const hard = [];
   const localPairs = new Map();
@@ -4409,8 +4432,8 @@ async function checkDeliveryItemPairs(lines, focusTarget = null, returnFocus = f
     }
   });
 
-  if (pairs.length) {
-    const uniquePairs = [...new Map(pairs.map((pair) => [
+  if (checkPairs.length) {
+    const uniquePairs = [...new Map(checkPairs.map((pair) => [
       `${pair.so}\u0000${pair.item_key}`,
       { so: pair.so, item_name: pair.item_name, client_name: document.querySelector("#delivery-request-form").elements.client_name.value.trim() }
     ])).values()];
@@ -4433,7 +4456,7 @@ async function checkDeliveryItemPairs(lines, focusTarget = null, returnFocus = f
       return false;
     }
     (data || []).forEach((conflict) => {
-      const matchingPairs = pairs.filter((item) => item.so === conflict.so && item.item_key === conflict.item_key);
+      const matchingPairs = checkPairs.filter((item) => item.so === conflict.so && item.item_key === conflict.item_key);
       if (!matchingPairs.length) return;
       matchingPairs.forEach((pair) => {
         const issues = lineIssues.get(pair.lineIndex) || [];
@@ -4456,7 +4479,7 @@ async function checkDeliveryItemPairs(lines, focusTarget = null, returnFocus = f
     const uniqueHard = [...new Map(hard.map((conflict) => [
       `${conflict.so}\u0000${conflict.item_key}`, conflict
     ])).values()];
-    const conflictingPair = pairs.find((pair) => pair.so === uniqueHard[0].so && pair.item_key === uniqueHard[0].item_key);
+    const conflictingPair = checkPairs.find((pair) => pair.so === uniqueHard[0].so && pair.item_key === uniqueHard[0].item_key);
     deliveryConflictLineIndex = conflictingPair?.lineIndex ?? 0;
     const conflictingInput = document.querySelectorAll("#delivery-item-lines .delivery-item-row [name='so_number']")[deliveryConflictLineIndex];
     showDeliveryConflictDialog(uniqueHard, conflictingInput || focusTarget,
@@ -4466,7 +4489,7 @@ async function checkDeliveryItemPairs(lines, focusTarget = null, returnFocus = f
   const soft = [...lineIssues.values()].flat().filter((conflict) => conflict.conflict_type === "soft");
   const unseenSoft = soft.filter((conflict) => !deliverySoftWarningsSeen.has(softConflictKey(conflict)));
   if (unseenSoft.length && showSoftPopup) {
-    const conflictingPair = pairs.find((pair) => pair.so === unseenSoft[0].so && pair.item_key === unseenSoft[0].item_key);
+    const conflictingPair = checkPairs.find((pair) => pair.so === unseenSoft[0].so && pair.item_key === unseenSoft[0].item_key);
     deliveryConflictLineIndex = conflictingPair?.lineIndex ?? 0;
     const conflictingInput = document.querySelectorAll("#delivery-item-lines .delivery-item-row [name='so_number']")[deliveryConflictLineIndex];
     showDeliveryConflictDialog(unseenSoft, conflictingInput || focusTarget,
@@ -4596,6 +4619,7 @@ async function submitDelivery(event) {
       }).select("id,ref_no").single();
     const { data, error } = result;
     if (error) throw error;
+    deliveryOriginalItemPairs = null;
     toast(productionEditId
       ? `Production entry ${data.ref_no} updated.`
       : deliveryEditId
@@ -4657,6 +4681,7 @@ function openDeliveryEdit(row) {
   const form = document.querySelector("#delivery-request-form");
   const dialog = document.querySelector("#delivery-edit-dialog");
   deliveryEditId = row.id;
+  deliveryOriginalItemPairs = snapshotDeliveryItemPairs(row.items || []);
   clearDeliveryItemConflictState();
   configureDeliveryForm(form);
   form.elements.client_name.value = row.client_name || "";
@@ -4685,6 +4710,7 @@ function openProductionDeliveryEdit(row) {
   const form = document.querySelector("#delivery-request-form");
   if (!form.classList.contains("hidden") && !confirm("Discard the current unsaved delivery entry?")) return;
   productionEditId = row.id;
+  deliveryOriginalItemPairs = snapshotDeliveryItemPairs(row.items || []);
   clearDeliveryItemConflictState();
   form.elements.salesperson_id.value = row.salesperson_id;
   form.elements.salesperson_id.disabled = true;
@@ -4708,6 +4734,7 @@ function openProductionDeliveryEdit(row) {
 function closeProductionDeliveryEdit() {
   if (!productionEditId) return;
   productionEditId = null;
+  deliveryOriginalItemPairs = null;
   const form = document.querySelector("#delivery-request-form");
   form.reset();
   form.elements.items.value = "[]";
@@ -4722,6 +4749,7 @@ function closeProductionDeliveryEdit() {
 function closeDeliveryEdit() {
   if (!deliveryEditId) return;
   deliveryEditId = null;
+  deliveryOriginalItemPairs = null;
   const form = document.querySelector("#delivery-request-form");
   const dialog = document.querySelector("#delivery-edit-dialog");
   const clearButton = form.querySelector(".form-actions [type='reset'], .form-actions [type='button']");
@@ -5992,6 +6020,7 @@ async function initDeliveries() {
         closeProductionDeliveryEdit();
         return;
       }
+      if (!deliveryEditId) deliveryOriginalItemPairs = null;
       form.classList.toggle("hidden");
       document.querySelector("#delivery-form-toggle").textContent = form.classList.contains("hidden") ? "New request" : "Close request";
     });
