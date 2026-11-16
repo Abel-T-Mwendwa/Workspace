@@ -1017,6 +1017,16 @@ textarea:focus {
   padding-bottom: 0;
 }
 
+#my-jobs-filter-chips {
+  flex-wrap: wrap;
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+#my-jobs-filter-chips .production-goods-chip {
+  min-height: 44px;
+}
+
 .production-goods-chip {
   display: inline-flex;
   align-items: center;
@@ -3856,6 +3866,10 @@ tbody tr.delivery-address-urgent-row:hover {
 }
 
 #route-tallies .delivery-activity-tile[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
+#jobs-tallies .delivery-activity-tile[aria-pressed="true"] {
   box-shadow: 0 0 0 2px var(--blue);
 }
 

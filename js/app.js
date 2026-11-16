@@ -147,6 +147,7 @@ let vehicleRows = [];
 let riderJobRows = [];
 let deliveryQueryToken = 0;
 let riderOffset = 0;
+let riderHasMore = false;
 let riderQueryToken = 0;
 let riderUsers = [];
 let requesterNames = new Map();
@@ -1307,7 +1308,8 @@ function activityQuery(table, period, card, columns, options = {}) {
     }
   }
   for (const [column, value] of Object.entries(card.filters || {})) {
-    query = value === null ? query.is(column, null)
+    query = Array.isArray(value) ? query.in(column, value)
+      : value === null ? query.is(column, null)
       : value === "notNull" ? query.not(column, "is", null) : query.eq(column, value);
   }
   return query;
@@ -1412,7 +1414,7 @@ async function openDeliveryActivity(card, period) {
   }
 }
 
-async function renderPeriodSummary(rootId, periodId, table, cards) {
+async function renderPeriodSummary(rootId, periodId, table, cards, shouldRender = () => true) {
   const root = document.querySelector(`#${rootId}`);
   const period = periodId === "delivery-period"
     ? deliveryActivityPeriod : document.querySelector(`#${periodId}`)?.value || "day";
@@ -1421,6 +1423,7 @@ async function renderPeriodSummary(rootId, periodId, table, cards) {
       "id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,details,assigned_rider,rider_time,rider_time_end,status"))))
       .map((rows) => rows.length)
     : await Promise.all(cards.map((card) => activityCount(table, period, card)));
+  if (!shouldRender()) return;
   const periodLabel = typeof period === "object" && activityPeriodIsCustom(period)
     ? activityPeriodSummary(period) : ({ day: "today", week: "this week", month: "this month" })[activityPeriodType(period)] || period;
   root.innerHTML = tallyMarkup(cards.map((card, index) => [
@@ -2754,8 +2757,10 @@ function bindLogoutHandlers() {
 async function bootstrap() {
   initializeScrollableTables();
   try {
-    const { data: { session: activeSession } } = await client.auth.getSession();
+    const { data: { session: activeSession }, error: sessionError } = await client.auth.getSession();
+    if (sessionError) throw sessionError;
     session = activeSession;
+    if (page === "my-jobs.html") console.log("[TEMP-DEBUG] auth ready", Boolean(session), session?.user?.id); // TEMP-DEBUG
     if (!session) return location.replace("./index.html");
     if (!sessionIsWithinLimit()) {
       await endSession("expired");
@@ -2768,6 +2773,7 @@ async function bootstrap() {
       return;
     }
     profile = currentProfile;
+    if (page === "my-jobs.html") console.log("[TEMP-DEBUG] rider id resolved", profile.id); // TEMP-DEBUG
     if (profile.role === "admin" && page === "my-jobs.html") {
       location.replace("./home.html");
       return;
@@ -6587,11 +6593,23 @@ async function loadRiderJobs(reset = true) {
   const token = ++riderQueryToken;
   const previousIds = new Set(riderJobRows.map((row) => row.id));
   const wasLoaded = riderJobRows.length > 0;
-  if (reset) riderOffset = 0;
+  if (reset) {
+    riderOffset = 0;
+    riderHasMore = false;
+  }
+  const myJobs = page === "my-jobs.html";
+  if (myJobs) {
+    document.querySelector("#my-jobs-loading").classList.remove("hidden");
+    document.querySelector("#my-jobs-empty").classList.add("hidden");
+    document.querySelector("#my-jobs-error").classList.add("hidden");
+    document.querySelector("#my-jobs-more").classList.add("hidden");
+    document.querySelector("#my-jobs-list").setAttribute("aria-busy", "true");
+    if (reset) document.querySelector("#my-jobs-list").classList.add("hidden");
+  }
   const routeAdmin = hasRouteAdminAccess(profile) && page === "route-admin.html";
   const search = document.querySelector("#route-search")?.value.trim() || "";
   const routeFilters = routeAdmin ? routeRiderFilterValues() : null;
-  let base = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at", routeAdmin ? { count: "exact" } : undefined);
+  let base = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at", routeAdmin || myJobs ? { count: "exact" } : undefined);
   if (routeAdmin) {
     const dateRange = routeRiderDateRange(routeFilters.period);
     if (dateRange) base = base.gte("scheduled_date", dateRange.from).lte("scheduled_date", dateRange.to);
@@ -6599,24 +6617,40 @@ async function loadRiderJobs(reset = true) {
   }
   if (profile.role === "rider" && !routeAdmin) base = base.eq("assigned_rider", profile.id);
   else if (!routeAdmin) base = base.eq("created_by", profile.id);
+  if (myJobs) {
+    const filter = document.querySelector("#my-jobs-filter").value;
+    if (filter === "active") base = base.or("status.neq.Finished,status.is.null");
+    else if (filter === "finished") base = base.eq("status", "Finished");
+  }
   try {
     if (routeAdmin && search) {
       const term = JSON.stringify(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
       base = base.or(`ref_no.ilike.${term},client_name.ilike.${term}`);
     } else if (!routeAdmin && search) base = base.ilike("client_name", `%${search}%`);
-    const { data, error, count } = await base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin })
-      .range(riderOffset, riderOffset + RIDER_PAGE_SIZE - 1);
+    if (myJobs) console.log("[TEMP-DEBUG] query start", { riderId: profile.id, reset, offset: riderOffset }); // TEMP-DEBUG
+    let orderedQuery = base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin });
+    if (myJobs) orderedQuery = orderedQuery.order("id", { ascending: true });
+    const { data, error, count } = await orderedQuery.range(riderOffset, riderOffset + RIDER_PAGE_SIZE - 1);
+    if (myJobs) console.log("[TEMP-DEBUG] query result", { rows: data?.length || 0, count, error }); // TEMP-DEBUG
     if (error) throw error;
     const rows = data || [];
     if (token !== riderQueryToken) return;
     riderJobRows = reset ? rows : [...riderJobRows, ...rows.filter((row) => !riderJobRows.some((old) => old.id === row.id))];
     riderOffset = reset ? rows.length : riderOffset + rows.length;
     if (routeAdmin) routeRiderTotalCount = count || 0;
+    if (myJobs) riderHasMore = riderOffset < (count || 0);
     if (profile.role === "rider") {
-      const activeResult = await client.from("rider_jobs").select("id", { count: "exact", head: true })
-        .eq("assigned_rider", profile.id).eq("status", "In progress");
-      if (activeResult.error) throw activeResult.error;
-      activeRiderJobCount = activeResult.count || 0;
+      try {
+        const activeResult = await client.from("rider_jobs").select("id", { count: "exact", head: true })
+          .eq("assigned_rider", profile.id).eq("status", "In progress");
+        if (activeResult.error) throw activeResult.error;
+        activeRiderJobCount = activeResult.count || 0;
+      } catch (error) {
+        if (!myJobs) throw error;
+        activeRiderJobCount = 1;
+        console.error("[TEMP-DEBUG] active-job count error", error); // TEMP-DEBUG
+        toast(error.message || "Could not check active rider jobs.", "error");
+      }
     }
     if (token !== riderQueryToken) return;
     if (profile.role === "rider" || page === "my-jobs.html") renderMyJobs();
@@ -6631,6 +6665,16 @@ async function loadRiderJobs(reset = true) {
       ? riderOffset >= routeRiderTotalCount
       : rows.length < RIDER_PAGE_SIZE);
   } catch (error) {
+    if (token !== riderQueryToken) return;
+    if (myJobs) {
+      riderHasMore = false;
+      document.querySelector("#my-jobs-loading").classList.add("hidden");
+      document.querySelector("#my-jobs-empty").classList.add("hidden");
+      document.querySelector("#my-jobs-error").classList.remove("hidden");
+      document.querySelector("#my-jobs-more").classList.add("hidden");
+      document.querySelector("#my-jobs-list").setAttribute("aria-busy", "false");
+      console.error("[TEMP-DEBUG] query error", error); // TEMP-DEBUG
+    }
     toast(error.message || "Could not load rider requests.", "error");
   }
 }
@@ -7042,10 +7086,14 @@ function renderMyJobs() {
   const root = document.querySelector("#my-jobs-list");
   const filter = document.querySelector("#my-jobs-filter").value;
   const assigned = riderJobRows.filter((row) => profile.role !== "rider" || row.assigned_rider === profile.id)
-    .sort((a, b) => `${a.scheduled_date} ${a.rider_time || ""}`.localeCompare(`${b.scheduled_date} ${b.rider_time || ""}`));
+    .sort((a, b) => `${a.scheduled_date} ${a.rider_time || ""}`.localeCompare(`${b.scheduled_date} ${b.rider_time || ""}`)
+      || String(a.id).localeCompare(String(b.id)));
   const filtered = assigned.filter((row) => filter === "active" ? row.status !== "Finished"
     : filter === "finished" ? row.status === "Finished" : true);
+  console.log("[TEMP-DEBUG] render", { loaded: riderJobRows.length, visible: filtered.length, filter }); // TEMP-DEBUG
   const inProgress = profile.role === "rider" ? activeRiderJobCount > 0 : assigned.some((row) => row.status === "In progress");
+  root.classList.remove("hidden");
+  root.setAttribute("aria-busy", "false");
   root.innerHTML = filtered.map((row) => `<article class="rider-job-card" data-entry-id="${escapeHtml(row.id)}">
     <div class="rider-job-title"><div><span class="home-card-ref">${escapeHtml(row.ref_no)}</span><h2>${escapeHtml(row.client_name)}</h2></div><span class="badge ${row.status === "Finished" ? "done" : row.status === "In progress" ? "progress" : "requested"}">${escapeHtml(row.status)}</span></div>
     <dl><div><dt>Contact</dt><dd>${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</dd></div>
@@ -7054,8 +7102,10 @@ function renderMyJobs() {
       <div><dt>Rider time</dt><dd>${escapeHtml(riderSlotText(row))}</dd></div></dl>
     <div class="table-actions">${profile.role === "rider" && row.status === "Started" ? `<button class="primary" data-rider-start="${escapeHtml(row.id)}" ${inProgress ? "disabled" : ""}>Start</button>` : ""}
       ${profile.role === "rider" && row.status === "In progress" ? `<button class="primary" data-rider-finish="${escapeHtml(row.id)}">Finish</button>` : ""}</div></article>`).join("");
+  document.querySelector("#my-jobs-loading").classList.add("hidden");
+  document.querySelector("#my-jobs-error").classList.add("hidden");
   document.querySelector("#my-jobs-empty").classList.toggle("hidden", filtered.length > 0);
-  document.querySelector("#my-jobs-more")?.classList.toggle("hidden", riderJobRows.length < RIDER_PAGE_SIZE);
+  document.querySelector("#my-jobs-more")?.classList.toggle("hidden", !riderHasMore || !filtered.length);
   root.querySelectorAll("[data-rider-start]").forEach((button) => button.addEventListener("click", () =>
     updateRiderJob(button.dataset.riderStart, { status: "In progress" }, button, "Job started.")));
   root.querySelectorAll("[data-rider-finish]").forEach((button) => button.addEventListener("click", async () => {
@@ -7064,17 +7114,151 @@ function renderMyJobs() {
 }
 
 async function initMyJobs() {
-  bindPeriodSummary("jobs-period", () => renderPeriodSummary("jobs-tallies", "jobs-period", "rider_jobs", [
+  const tiles = document.querySelector("#jobs-tallies");
+  const periodSelect = document.querySelector("#jobs-period");
+  const dialog = document.querySelector("#delivery-activity-dialog");
+  const cards = [
     { label: "Assigned", dateColumn: "assigned_at", filters: { assigned_rider: profile.id } },
-    { label: "In progress", dateColumn: "started_at", filters: { assigned_rider: profile.id } },
-    { label: "Finished", dateColumn: "finished_at", filters: { assigned_rider: profile.id } }
-  ]));
-  await loadRiderJobs(true);
-  document.querySelector("#my-jobs-filter").addEventListener("change", renderMyJobs);
+    { label: "In progress", dateColumn: "started_at", filters: { assigned_rider: profile.id, status: ["Started", "In progress"] } },
+    { label: "Finished", dateColumn: "finished_at", filters: { assigned_rider: profile.id, status: "Finished" } }
+  ];
+  const columns = "id,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,scheduled_date,rider_time,rider_time_end,status";
+  let summaryRequest = 0;
+  let reportRequest = 0;
+  let reportIndex = null;
+  let reportTrigger = null;
+  let previousPeriod = periodSelect.value;
+  let focusTileAfterPeriodRefresh = null;
+  const updateTileSelection = () => tiles.querySelectorAll(".delivery-activity-tile").forEach((tile, index) =>
+    tile.setAttribute("aria-pressed", String(reportIndex === index)));
+  const refreshActivityTiles = () => {
+    const request = ++summaryRequest;
+    return renderPeriodSummary("jobs-tallies", "jobs-period", "rider_jobs", cards,
+      () => request === summaryRequest).then(() => {
+      if (request !== summaryRequest) return;
+      tiles.querySelectorAll(".stat-card").forEach((tile, index) => {
+        tile.classList.add("delivery-activity-tile");
+        tile.tabIndex = 0;
+        tile.setAttribute("role", "button");
+        tile.setAttribute("aria-haspopup", "dialog");
+        tile.setAttribute("aria-pressed", String(reportIndex === index));
+        tile.dataset.myJobsActivityIndex = String(index);
+      });
+      if (focusTileAfterPeriodRefresh !== null) {
+        tiles.querySelector(`[data-my-jobs-activity-index="${focusTileAfterPeriodRefresh}"]`)?.focus();
+        focusTileAfterPeriodRefresh = null;
+      }
+    });
+  };
+  const openFromTile = async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const tile = event.target.closest(".delivery-activity-tile");
+    if (!tile || !tiles.contains(tile)) return;
+    const index = Number(tile.dataset.myJobsActivityIndex);
+    const card = cards[index];
+    if (!card) return;
+    const period = periodSelect.value;
+    const expectedCount = Number(tile.querySelector("strong")?.textContent || 0);
+    const request = ++reportRequest;
+    reportIndex = index;
+    reportTrigger = tile;
+    updateTileSelection();
+    const title = `${card.label}: ${activityPeriodSummary(period, true)}`;
+    const range = activityPeriodDetail(period);
+    const printed = localDateTime(new Date());
+    renderActivityReport({ title, range, total: 0, printed, message: "Loading jobs…", rows: "" });
+    if (!dialog.open) {
+      dialog.showModal();
+      dialog.querySelector("[data-delivery-activity-close]")?.focus();
+    }
+    try {
+      const rows = await activityRows("rider_jobs", period, card, columns);
+      if (!dialog.open || request !== reportRequest || periodSelect.value !== period) return;
+      if (rows.length !== expectedCount) {
+        console.warn("My jobs activity tile count differs from its report rows.", {
+          tile: card.label, expectedCount, rows: rows.length, period
+        });
+      }
+      renderActivityReport({
+        title,
+        range,
+        total: rows.length,
+        printed,
+        message: rows.length ? "" : "No jobs match this filter.",
+        rows: rows.map((row) => `<tr><td>${escapeHtml(row.client_name)}<br><small>${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</small></td><td>${escapeHtml(row.address)}<br><small>${escapeHtml(row.details)}</small></td><td>${escapeHtml(row.job_type)}</td><td>${escapeHtml(riderSlotText(row))}</td><td><span class="badge ${row.status === "Finished" ? "done" : row.status === "In progress" ? "progress" : "requested"}">${escapeHtml(row.status)}</span></td></tr>`).join("")
+      });
+    } catch (error) {
+      if (!dialog.open || request !== reportRequest) return;
+      renderActivityReport({
+        title,
+        range,
+        total: 0,
+        printed,
+        message: "Could not load jobs for this period.",
+        rows: ""
+      });
+      toast(error.message || "Could not load jobs for this period.", "error");
+    }
+  };
+  const updateReportFocus = () => {
+    const focusTarget = reportIndex === null
+      ? reportTrigger
+      : tiles.querySelector(`[data-my-jobs-activity-index="${reportIndex}"]`) || reportTrigger;
+    reportIndex = null;
+    updateTileSelection();
+    focusTarget?.focus();
+    reportTrigger = null;
+    reportRequest += 1;
+  };
+  tiles.addEventListener("click", openFromTile);
+  tiles.addEventListener("keydown", (event) => {
+    if (event.target instanceof Element
+      && (event.key === "Enter" || event.key === " ")
+      && event.target.matches(".delivery-activity-tile")) {
+      event.preventDefault();
+      event.target.click();
+    }
+  });
+  document.querySelectorAll("[data-delivery-activity-close]").forEach((button) =>
+    button.addEventListener("click", () => dialog.close()));
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.addEventListener("close", updateReportFocus);
+  document.querySelector("#delivery-activity-print").addEventListener("click", () => window.print());
+  periodSelect.addEventListener("change", () => {
+    const changed = periodSelect.value !== previousPeriod;
+    previousPeriod = periodSelect.value;
+    if (changed && dialog.open) {
+      focusTileAfterPeriodRefresh = reportIndex;
+      dialog.close();
+    }
+  });
+  bindPeriodSummary("jobs-period", refreshActivityTiles);
+  const filterInput = document.querySelector("#my-jobs-filter");
+  const filterChips = document.querySelector("#my-jobs-filter-chips");
+  filterChips.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest("[data-my-jobs-filter]");
+    if (!button || button.getAttribute("aria-pressed") === "true") return;
+    filterInput.value = button.dataset.myJobsFilter;
+    filterChips.querySelectorAll("[data-my-jobs-filter]").forEach((chip) => {
+      const selected = chip === button;
+      chip.classList.toggle("is-active", selected);
+      chip.setAttribute("aria-pressed", String(selected));
+    });
+    filterInput.dispatchEvent(new Event("change"));
+  });
+  filterInput.addEventListener("change", () => { void loadRiderJobs(true); });
   document.querySelector("#my-jobs-more").addEventListener("click", () => { void loadRiderJobs(false); });
+  document.querySelector("#my-jobs-retry").addEventListener("click", () => { void loadRiderJobs(true); });
   client.channel(`my-rider-jobs-${profile.id}`).on("postgres_changes", {
     event: "*", schema: "public", table: "rider_jobs", filter: `assigned_rider=eq.${profile.id}`
-  }, () => { void loadRiderJobs(true); }).subscribe();
+  }, () => {
+    void loadRiderJobs(true);
+    periodSelect.dispatchEvent(new Event("change"));
+  }).subscribe();
+  await loadRiderJobs(true);
   startVisibleRefresh(() => loadRiderJobs(true));
   const openId = new URLSearchParams(location.search).get("open");
   if (openId && !riderJobRows.some((row) => row.id === openId)) {
