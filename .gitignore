@@ -5,3 +5,14 @@ node_modules/
 qa/QA_REFERENCE.md
 qa/QA_REPORT.md
 supabase
+ssh key
+ssh key.pub
+id_rsa
+id_ecdsa
+id_ed25519
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
