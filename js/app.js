@@ -2,8 +2,17 @@ import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductio
 import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./delivery-slots.js";
 import { bindEditorKeyboard } from "./dialog-keyboard.js";
 import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./rider-request-slots.js";
+import { escapeHtml } from "./utils/escape-html.js";
+import { debounce } from "./utils/debounce.js";
+import { lineFieldNames, lineFieldTitles, linesFromValue, lineSummary } from "./utils/lines.js";
+import { brandingModes, normalizeBrandingDetails, brandingLineSummary, brandingSummary } from "./utils/branding.js";
+import { toast } from "./ui/toast.js";
+import { setBusy } from "./ui/busy.js";
 
 const client = window.supabase.createClient(window.APP_CONFIG.supabaseUrl, window.APP_CONFIG.supabaseAnonKey, {
+  ...(typeof window.createEgressDebugFetch === "function"
+    ? { global: { fetch: window.createEgressDebugFetch() } }
+    : {}),
   auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
 });
 const historyDialog = document.querySelector("#history-dialog");
@@ -13,7 +22,8 @@ const DEFAULT_GOODS_FILTER = "pending";
 const LOGIN_AT_KEY = "loginAt";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const STATUS_BOARD_REFRESH_MS = 30000;
+const STATUS_BOARD_REFRESH_MS = 3 * 60 * 1000;
+const STATUS_BOARD_PROFILES_TTL_MS = 10 * 60 * 1000;
 const STATUS_COLOURS = {
   ready: "green",
   partial: "orange",
@@ -70,6 +80,7 @@ let session;
 let profile;
 let allRows = [];
 let allChanges = [];
+let designerOpenArtworkIds = new Set();
 let allWorkNotes = [];
 let workNotesByRequest = new Map();
 let activeWorkNoteRequestId = null;
@@ -91,6 +102,8 @@ let statusBoardLiveChannels = [];
 let statusBoardChannelStates = new Map();
 let statusBoardRealtimeTimer = null;
 let statusBoardRefreshQueued = false;
+let statusBoardProfilesLoadedAt = 0;
+let statusBoardLastRefreshAt = 0;
 let statusBoardReportedQueryErrors = new Set();
 let statusBoardWorkflowFilters = {
   artworks: { search: "", person: "", date: "all" },
@@ -132,6 +145,9 @@ let statusBoardRefreshTimer = null;
 let statusBoardLoading = false;
 let statusBoardUnknownStatuses = new Set();
 let statusBoardReportedIssues = new Set();
+let artworkRealtimeTimer = null;
+let artworkRefreshInFlight = false;
+let artworkRefreshQueued = false;
 let productionGoodsFilter = DEFAULT_GOODS_FILTER;
 let deliveryBrandingFilter = "all";
 let assignedPendingDeliveries = [];
@@ -143,8 +159,11 @@ let deliveryRealtimeIds = new Set();
 let deliveryRowsVersion = 0;
 let deliveryExitingRows = new Map();
 let deliveryRefreshToken = 0;
+let deliveryLastFullRefreshAt = 0;
 let vehicleRows = [];
+let vehicleListLastLoadedAt = 0;
 let riderJobRows = [];
+let riderJobsLastLoadedAt = 0;
 let deliveryQueryToken = 0;
 let riderOffset = 0;
 let riderHasMore = false;
@@ -195,24 +214,6 @@ let activeSort = savedSortState || (page === "designer.html"
     : { key: "sr", direction: "asc" });
 let userSortKey = savedSortState?.key || (page === "designer.html" ? "date_needed" : ["deliveries.html", "production-store.html"].includes(page) ? "delivery_schedule" : null);
 let donePopoverTrigger = null;
-
-function debounce(callback, delay = 180) {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => callback(...args), delay);
-  };
-}
-
-function toast(message, type = "success") {
-  const root = document.querySelector("#toast-root");
-  root.replaceChildren();
-  const item = document.createElement("div");
-  item.className = `toast ${type}`;
-  item.textContent = message;
-  root.append(item);
-  setTimeout(() => item.remove(), 4200);
-}
 
 function isTypingTarget(target) {
   return target instanceof Element
@@ -289,40 +290,11 @@ function handleKeyboardShortcuts(event) {
 
 document.addEventListener("keydown", handleKeyboardShortcuts);
 
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  })[character]);
-}
-
-const lineFieldNames = ["product"];
-const lineFieldTitles = {
-  product: "Product with code and colour"
-};
-const brandingModes = [
-  "Embroidery",
-  "Screen printing",
-  "Digital printing",
-  "Sublimation",
-  "DTF",
-  "Embroidery/sublimation",
-  "Large Format"
-];
 let lineDialog;
 let lineDialogState;
 let brandingDialog;
 let brandingDialogState;
 let assignmentNotifications = [];
-
-function linesFromValue(value) {
-  const values = Array.isArray(value) ? value : typeof value === "string" && value ? [value] : [];
-  return values.filter((line) => typeof line === "string").map((line) => line.trim()).filter(Boolean);
-}
-
-function lineSummary(lines) {
-  if (!lines.length) return "Click to add";
-  return `${lines[0]}${lines.length > 1 ? ` +${lines.length - 1} more` : ""}`;
-}
 
 function lineFieldMarkup(name, value, { mode = "edit", recordId = "", direct = false } = {}) {
   const lines = linesFromValue(value);
@@ -518,35 +490,6 @@ document.addEventListener("click", (event) => {
 });
 
 makeLineDialog();
-
-function normalizeBrandingDetails(value) {
-  let details = value;
-  if (typeof details === "string") {
-    try {
-      details = JSON.parse(details);
-    } catch {
-      details = [];
-    }
-  }
-  if (!Array.isArray(details)) return [];
-  return details.filter((line) => line && typeof line === "object" && !Array.isArray(line)).map((line) => ({
-    logo: String(line.logo ?? ""),
-    mode: String(line.mode ?? ""),
-    pantone: String(line.pantone ?? ""),
-    size: String(line.size ?? ""),
-    position: String(line.position ?? "")
-  }));
-}
-
-function brandingLineSummary(line) {
-  return [line.mode, line.logo, line.pantone, line.size, line.position].filter(Boolean).join(" · ");
-}
-
-function brandingSummary(details) {
-  const lines = normalizeBrandingDetails(details);
-  const first = lines.length ? brandingLineSummary(lines[0]) : "";
-  return `${first || "Click to add"}${lines.length > 1 ? ` +${lines.length - 1} more` : ""}`;
-}
 
 function brandingFieldMarkup(value, { mode = "edit", recordId = "", direct = false } = {}) {
   const details = normalizeBrandingDetails(value);
@@ -829,22 +772,38 @@ function sessionIsWithinLimit() {
   return loginAt !== null && age >= 0 && age < SESSION_DURATION_MS;
 }
 
-function startVisibleRefresh(callback) {
-  const refresh = () => {
-    if (document.hidden) return;
-    Promise.resolve(callback()).catch((error) => {
+let visibleRefreshTimer = null;
+
+function startVisibleRefresh(callback, options = {}) {
+  if (visibleRefreshTimer !== null) return visibleRefreshTimer;
+  const intervalMs = options.intervalMs ?? 30000;
+  const visibilityMinAgeMs = options.visibilityMinAgeMs ?? 0;
+  let lastRefreshCompletedAt = Date.now();
+  let refreshing = false;
+  const lastRefreshAt = options.lastRefreshAt || (() => lastRefreshCompletedAt);
+  const refresh = (visibilityReturn = false) => {
+    if (document.hidden || refreshing) return;
+    if (visibilityReturn && Date.now() - lastRefreshAt() < visibilityMinAgeMs) return;
+    refreshing = true;
+    Promise.resolve().then(callback).then(() => {
+      lastRefreshCompletedAt = Date.now();
+    }).catch((error) => {
       toast(error.message || "Could not refresh this list.", "error");
+    }).finally(() => {
+      refreshing = false;
     });
   };
   const timer = window.setInterval(() => {
     refresh();
-  }, 30000);
+  }, intervalMs);
+  visibleRefreshTimer = timer;
   const onVisibilityChange = () => {
-    if (!document.hidden) refresh();
+    if (!document.hidden) refresh(true);
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pagehide", () => {
     window.clearInterval(timer);
+    if (visibleRefreshTimer === timer) visibleRefreshTimer = null;
     document.removeEventListener("visibilitychange", onVisibilityChange);
   }, { once: true });
   return timer;
@@ -977,17 +936,6 @@ function preferredDesignerName(row) {
   return row.preferred_designer_recorded === false ? "Not recorded" : profileName(row.preferred_designer);
 }
 
-function setBusy(button, busy, label) {
-  if (!button) return;
-  if (busy) {
-    button.dataset.originalText = button.textContent;
-    button.textContent = label || "Saving…";
-  } else {
-    button.textContent = button.dataset.originalText || button.textContent;
-  }
-  button.disabled = busy;
-}
-
 async function invokeAdmin(action, payload = {}) {
   const { data, error } = await client.functions.invoke("user-admin", { body: { action, ...payload } });
   if (error) {
@@ -1031,16 +979,29 @@ async function loadUsers() {
 }
 
 async function loadArtworks() {
-  const { data, error } = await client.from("artwork_requests").select("*").order("sr", { ascending: true });
+  const requestColumns = page === "sales.html"
+    ? "id,sr,created_month,created_at,ref_no,created_by,category,client_name,reference_type,previous_reference,so_number,product,branding_details,high_res_logo,redesign_logo,additional_info,date_needed,preferred_designer,preferred_designer_recorded,status,completed_at,done_at"
+    : page === "designer.html"
+      ? "id,sr,ref_no,created_at,created_by,client_name,reference_type,previous_reference,so_number,date_needed,product,branding_details,category,additional_info,status,assigned_designer,preferred_designer,preferred_designer_recorded,done_at"
+      : "id,ref_no,sr,created_at,created_month,created_by,preferred_designer,preferred_designer_recorded,assigned_designer,category,client_name,reference_type,previous_reference,so_number,product,branding_details,high_res_logo,redesign_logo,additional_info,date_needed,status,claimed_at,done_at,done_by,designer_notes,change_count,changes_done,updated_at";
+  const { data, error } = await client.from("artwork_requests").select(requestColumns).order("sr", { ascending: true });
   if (error) throw error;
   allRows = data || [];
-  if (allRows.length) {
-    const changeResult = await client.from("artwork_changes").select("*").in("artwork_id", allRows.map((row) => row.id));
+  const changeColumns = page === "sales.html"
+    ? "artwork_id,requested_on,status,done_at"
+    : page === "designer.html"
+      ? "artwork_id,status,created_at,done_at,change_text,requested_by,requested_on"
+      : null;
+  if (changeColumns && allRows.length) {
+    const changeResult = await client.from("artwork_changes").select(changeColumns).in("artwork_id", allRows.map((row) => row.id));
     if (changeResult.error) throw changeResult.error;
     allChanges = changeResult.data || [];
   } else {
     allChanges = [];
   }
+  designerOpenArtworkIds = new Set(allChanges
+    .filter((change) => change.status === "open")
+    .map((change) => change.artwork_id));
   return allRows;
 }
 
@@ -1661,7 +1622,7 @@ async function initSales() {
     if (donePopoverTrigger && !event.target.closest("#done-time-popover, .done-time-trigger")) closeDonePopover();
   });
   subscribeToChanges();
-  startVisibleRefresh(refreshArtworks);
+  startVisibleRefresh(refreshArtworks, { intervalMs: 3 * 60 * 1000 });
   void loadedUsers;
 }
 
@@ -1964,7 +1925,9 @@ async function saveChange(event) {
 }
 
 async function showHistory(artworkId) {
-  const { data, error } = await client.from("artwork_changes").select("*").eq("artwork_id", artworkId).order("requested_on");
+  const { data, error } = await client.from("artwork_changes")
+    .select("change_text,requested_by,requested_on,status,done_by,done_at")
+    .eq("artwork_id", artworkId).order("requested_on");
   if (error) return toast(error.message, "error");
   const content = document.querySelector("#history-content");
   content.innerHTML = data.length ? data.map((change) => `<div class="change-item">${escapeHtml(change.change_text)}<small>${escapeHtml(change.requested_by)} · Requested ${localDate(change.requested_on)} · ${change.status === "done" ? `Done by ${escapeHtml(profileName(change.done_by))} ${localDateTime(change.done_at)}` : "Open"}</small></div>`).join("") : '<p class="empty-state">No changes requested.</p>';
@@ -2024,7 +1987,7 @@ async function initDesigner() {
     renderDesigner();
   });
   subscribeToChanges();
-  startVisibleRefresh(refreshArtworks);
+  startVisibleRefresh(refreshArtworks, { intervalMs: 3 * 60 * 1000 });
 }
 
 function openDesignerChangeDialog(trigger, text) {
@@ -2051,30 +2014,12 @@ async function loadAssignmentNotifications() {
   return assignmentNotifications;
 }
 
-async function changesFor(artworkIds) {
-  if (!artworkIds.length) return [];
-  const { data, error } = await client.from("artwork_changes").select("*").in("artwork_id", artworkIds).eq("status", "open").order("requested_on", { ascending: false });
-  if (error) throw error;
-  return data || [];
-}
-
-async function openChangeArtworkIds(rows) {
-  const changes = await changesFor(rows.map((row) => row.id));
-  return new Set(changes.map((change) => change.artwork_id));
-}
-
 async function renderDesignerTallies() {
   try {
     const rows = visibleDesignerRows();
-    const ids = rows.map((row) => row.id);
-    const { data: changes, error } = ids.length
-      ? await client.from("artwork_changes").select("id,artwork_id,status,created_at,done_at").in("artwork_id", ids)
-      : { data: [], error: null };
-    if (error) throw error;
     const inPeriod = periodBounds(document.querySelector("#designer-period").value);
     const received = rows.filter((row) => inPeriod(row.created_at));
-    const changesInPeriod = changes || [];
-    const openArtworkIds = await openChangeArtworkIds(rows);
+    const changesInPeriod = allChanges;
     document.querySelector("#designer-tallies").innerHTML = tallyMarkup([
       ["Requests received", received.length],
       ["Artworks done", rows.filter((row) => row.status === "Done" && inPeriod(row.done_at)).length],
@@ -2082,7 +2027,7 @@ async function renderDesignerTallies() {
       ["Changes requested", changesInPeriod.filter((change) => inPeriod(change.created_at)).length],
       ["Changes done", changesInPeriod.filter((change) => change.status === "done" && inPeriod(change.done_at)).length]
     ]);
-    document.querySelector("#change-count").textContent = openArtworkIds.size;
+    document.querySelector("#change-count").textContent = designerOpenArtworkIds.size;
     document.querySelector("#assignment-count").textContent = assignmentNotifications.length;
   } catch (error) {
     toast(error.message, "error");
@@ -2099,7 +2044,7 @@ async function renderDesigner() {
   const renderToken = ++designerRenderToken;
   try {
     const rows = visibleDesignerRows();
-    const openArtworkIds = await openChangeArtworkIds(rows);
+    const openArtworkIds = designerOpenArtworkIds;
     if (renderToken !== designerRenderToken) return;
     const assignedIds = new Set(assignmentNotifications.map((notice) => notice.artwork_id));
     const allChangesByArtwork = new Map();
@@ -2183,21 +2128,35 @@ async function updateArtwork(id, values, button, success) {
 
 function subscribeToChanges() {
   const channel = client.channel(`artwork-${profile.id}`).on("postgres_changes", { event: "*", schema: "public", table: "artwork_requests" }, () => {
-    void refreshArtworks();
+    scheduleArtworkRealtimeRefresh();
   }).on("postgres_changes", { event: "*", schema: "public", table: "artwork_changes" }, () => {
-    void refreshArtworks();
+    scheduleArtworkRealtimeRefresh();
   }).on("postgres_changes", { event: "*", schema: "public", table: "artwork_work_notes" }, () => {
-    void refreshArtworks();
+    scheduleArtworkRealtimeRefresh();
   });
   if (page === "designer.html") {
     channel.on("postgres_changes", { event: "*", schema: "public", table: "designer_notifications" }, () => {
-      void refreshArtworks();
+      scheduleArtworkRealtimeRefresh();
     });
   }
   channel.subscribe();
 }
 
+function scheduleArtworkRealtimeRefresh() {
+  window.clearTimeout(artworkRealtimeTimer);
+  artworkRealtimeTimer = window.setTimeout(() => {
+    artworkRealtimeTimer = null;
+    void refreshArtworks();
+  }, 1200);
+}
+
 async function refreshArtworks() {
+  window.clearTimeout(artworkRealtimeTimer);
+  artworkRealtimeTimer = null;
+  if (artworkRefreshInFlight) {
+    artworkRefreshQueued = true;
+    return;
+  }
   const openDialog = document.querySelector("dialog[open]");
   if (openDialog) {
     if (openDialog.dataset.refreshPending !== "true") {
@@ -2209,27 +2168,36 @@ async function refreshArtworks() {
     }
     return;
   }
+  artworkRefreshInFlight = true;
   const previousIds = new Set(allRows.map((row) => row.id));
   const wasLoaded = allRows.length > 0;
-  await Promise.all([
-    loadArtworks(),
-    page === "designer.html" ? loadAssignmentNotifications() : Promise.resolve()
-  ]);
-  if (page === "designer.html" || page === "sales.html") await loadWorkNotes();
-  if (page === "sales.html") {
-    renderSalesTallies();
-    renderSales();
-  } else if (page === "designer.html") {
-    renderDesignerTallies();
-    renderDesigner();
-  } else if (page === "admin.html") {
-    renderAdminTallies();
-    renderAdminRows();
-  }
-  if (wasLoaded) {
-    document.querySelectorAll("tbody tr[data-entry-id]").forEach((row) => {
-      if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
-    });
+  try {
+    await Promise.all([
+      loadArtworks(),
+      page === "designer.html" ? loadAssignmentNotifications() : Promise.resolve()
+    ]);
+    if (page === "designer.html" || page === "sales.html") await loadWorkNotes();
+    if (page === "sales.html") {
+      renderSalesTallies();
+      renderSales();
+    } else if (page === "designer.html") {
+      renderDesignerTallies();
+      renderDesigner();
+    } else if (page === "admin.html") {
+      renderAdminTallies();
+      renderAdminRows();
+    }
+    if (wasLoaded) {
+      document.querySelectorAll("tbody tr[data-entry-id]").forEach((row) => {
+        if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
+      });
+    }
+  } finally {
+    artworkRefreshInFlight = false;
+    if (artworkRefreshQueued) {
+      artworkRefreshQueued = false;
+      void refreshArtworks();
+    }
   }
 }
 
@@ -2253,8 +2221,8 @@ async function initAdmin() {
   });
   document.querySelector("#admin-delete").addEventListener("click", deleteArtwork);
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
-  client.channel(`admin-artwork-${profile.id}`).on("postgres_changes", { event: "*", schema: "public", table: "artwork_requests" }, () => { void refreshArtworks(); }).subscribe();
-  startVisibleRefresh(refreshArtworks);
+  client.channel(`admin-artwork-${profile.id}`).on("postgres_changes", { event: "*", schema: "public", table: "artwork_requests" }, scheduleArtworkRealtimeRefresh).subscribe();
+  startVisibleRefresh(refreshArtworks, { intervalMs: 3 * 60 * 1000 });
 }
 
 function renderAdmin() {
@@ -2785,6 +2753,7 @@ async function bootstrap() {
     monitorSessionExpiry();
     window.addEventListener("pagehide", () => {
       if (sessionExpiryTimer !== null) window.clearInterval(sessionExpiryTimer);
+      window.clearTimeout(artworkRealtimeTimer);
       void client.removeAllChannels();
     }, { once: true });
     await initPortal(client, profile, page, toast);
@@ -2818,7 +2787,13 @@ async function bootstrap() {
 const deliverySelect = "id,sr,ref_no,created_at,created_by,salesperson_id,handoff_status,goods_status,client_name,contact_name,contact_number,items,delivery_time,delivery_time_any,delivery_date,special_instruction,production_status,dispatch_status,ready_at,dispatched_at,delivered_at,transport,vehicle_id";
 const RIDER_PAGE_SIZE = 20;
 const DELIVERY_FILTERS_KEY = "deliveryFilters";
+const DELIVERY_REFERENCE_CACHE_TTL_MS = 10 * 60 * 1000;
 let deliverySalespersonNames = new Map();
+let activeDeliverySalespeople = null;
+let activeDeliverySalespeopleFetchedAt = 0;
+let activeDeliveryVehiclesFetchedAt = 0;
+const deliveryProfileCache = new Map();
+const deliveryVehicleNameCache = new Map();
 
 function isProductionStoreMode() {
   return page === "production-store.html";
@@ -3930,15 +3905,20 @@ async function statusBoardRefresh() {
   }
   statusBoardLoading = true;
   const scroll = statusBoardCaptureScroll();
+  const refreshProfiles = !statusBoardProfilesLoadedAt
+    || Date.now() - statusBoardProfilesLoadedAt >= STATUS_BOARD_PROFILES_TTL_MS;
   try {
     const results = await Promise.allSettled([
       client.from("deliveries")
-        .select("id,sr,ref_no,created_at,created_by,salesperson_id,handoff_status,goods_status,client_name,contact_name,items,production_status,dispatch_status,ready_at,dispatched_at,delivered_at,delivery_date")
+        .select("id,sr,ref_no,created_at,created_by,salesperson_id,goods_status,client_name,contact_name,items,production_status,dispatch_status,ready_at,dispatched_at,delivered_at,delivery_date")
         .order("created_at", { ascending: false }).limit(1000),
-      client.from("profiles").select("id,full_name").limit(1000),
-      client.from("artwork_requests").select("*"),
+      refreshProfiles
+        ? client.from("profiles").select("id,full_name").limit(1000)
+        : Promise.resolve({ data: null, error: null }),
+      client.from("artwork_requests")
+        .select("id,created_at,created_by,ref_no,sr,client_name,status,done_at,date_needed,assigned_designer,preferred_designer,change_count,address,product"),
       client.from("rider_jobs")
-        .select("id,sr,ref_no,created_at,created_by,client_name,contact_name,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,status,decline_reason,declined_at,assigned_at,started_at,finished_at")
+        .select("id,sr,ref_no,created_at,client_name,address,job_type,details,expected_time,scheduled_date,assigned_rider,status,decline_reason,declined_at,started_at,finished_at")
     ]);
     const [deliveryResult, profilesResult, artworksResult, ridersResult] = results.map((result) =>
       result.status === "fulfilled" ? result.value : { error: result.reason });
@@ -3951,8 +3931,9 @@ async function statusBoardRefresh() {
     }
     if (profilesResult.error) {
       statusBoardReportRefreshError("profiles", profilesResult.error, "Could not load status board people.");
-    } else {
+    } else if (profilesResult.data) {
       statusBoardProfiles = new Map((profilesResult.data || []).map((person) => [person.id, person.full_name]));
+      statusBoardProfilesLoadedAt = Date.now();
     }
     if (artworksResult.error) {
       statusBoardReportRefreshError("artwork_requests", artworksResult.error, "Could not load artwork statuses.");
@@ -3972,6 +3953,9 @@ async function statusBoardRefresh() {
     statusBoardRestoreScroll(scroll);
     statusBoardMeasureTop();
     statusBoardUpdatedText();
+    if (!deliveryResult.error && !profilesResult.error && !artworksResult.error && !ridersResult.error) {
+      statusBoardLastRefreshAt = Date.now();
+    }
   } catch (error) {
     statusBoardReportRefreshError("status-board", error, "Could not load the status board.");
   } finally {
@@ -4082,7 +4066,7 @@ async function initStatusBoard() {
     if (!document.hidden) void statusBoardRefresh();
   }, STATUS_BOARD_REFRESH_MS);
   const onVisibilityChange = () => {
-    if (!document.hidden) void statusBoardRefresh();
+    if (!document.hidden && Date.now() - statusBoardLastRefreshAt >= 60000) void statusBoardRefresh();
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pagehide", () => {
@@ -4803,13 +4787,59 @@ function closeDeliveryEdit() {
 }
 
 async function loadDeliverySalespeople() {
+  const data = await loadActiveDeliverySalespeople();
+  const select = document.querySelector("#delivery-request-form").elements.salesperson_id;
+  select.innerHTML = '<option value="">Choose salesperson</option>' + data.map((user) =>
+    `<option value="${escapeHtml(user.id)}">${escapeHtml(user.full_name)}</option>`
+  ).join("");
+}
+
+async function loadActiveDeliverySalespeople() {
+  if (activeDeliverySalespeople
+    && Date.now() - activeDeliverySalespeopleFetchedAt < DELIVERY_REFERENCE_CACHE_TTL_MS) {
+    return activeDeliverySalespeople;
+  }
   const { data, error } = await client.from("profiles").select("id,full_name")
     .eq("role", "salesperson").eq("active", true).order("full_name");
   if (error) throw error;
-  const select = document.querySelector("#delivery-request-form").elements.salesperson_id;
-  select.innerHTML = '<option value="">Choose salesperson</option>' + (data || []).map((user) =>
-    `<option value="${escapeHtml(user.id)}">${escapeHtml(user.full_name)}</option>`
-  ).join("");
+  activeDeliverySalespeople = data || [];
+  activeDeliverySalespeopleFetchedAt = Date.now();
+  activeDeliverySalespeople.forEach((user) => {
+    deliveryProfileCache.set(user.id, {
+      profile: { ...user, salesperson: true },
+      fetchedAt: activeDeliverySalespeopleFetchedAt
+    });
+  });
+  return activeDeliverySalespeople;
+}
+
+async function loadDeliveryProfiles(ids, salespersonOnly = false) {
+  const uniqueIds = [...new Set(ids)];
+  const now = Date.now();
+  const idsToFetch = uniqueIds.filter((id) => {
+    const cached = deliveryProfileCache.get(id);
+    return !cached || now - cached.fetchedAt >= DELIVERY_REFERENCE_CACHE_TTL_MS
+      || salespersonOnly && cached.profile.salesperson === null;
+  });
+  if (idsToFetch.length) {
+    let query = client.from("profiles").select("id,full_name");
+    if (salespersonOnly) query = query.eq("role", "salesperson");
+    const { data, error } = await query.in("id", idsToFetch);
+    if (error) throw error;
+    const fetchedProfiles = new Map((data || []).map((user) => [user.id, user]));
+    const fetchedAt = Date.now();
+    idsToFetch.forEach((id) => {
+      const fetched = fetchedProfiles.get(id);
+      const previous = deliveryProfileCache.get(id)?.profile;
+      deliveryProfileCache.set(id, {
+        profile: fetched
+          ? { ...fetched, salesperson: salespersonOnly ? true : previous?.salesperson ?? null }
+          : { id, full_name: salespersonOnly ? previous?.full_name || null : null, salesperson: salespersonOnly ? false : previous?.salesperson ?? null },
+        fetchedAt
+      });
+    });
+  }
+  return uniqueIds.map((id) => deliveryProfileCache.get(id)?.profile || null);
 }
 
 function saveDeliveryFilters() {
@@ -4863,10 +4893,9 @@ async function loadDeliveryFilterSalespeople() {
     select.innerHTML = '<option value="">All salespeople</option>';
     return;
   }
-  const { data, error } = await client.from("profiles").select("id,full_name")
-    .eq("role", "salesperson").in("id", [...salespersonIds]).order("full_name");
-  if (error) throw error;
-  const users = data || [];
+  const users = (await loadDeliveryProfiles([...salespersonIds], true))
+    .filter((user) => user?.salesperson)
+    .sort((a, b) => String(a.full_name || "").localeCompare(String(b.full_name || "")));
   deliverySalespersonNames = new Map(users.map((user) => [user.id, user.full_name]));
   const selected = select.value;
   select.innerHTML = '<option value="">All salespeople</option>' + users.map((user) =>
@@ -4881,9 +4910,8 @@ async function loadProductionStoreSalespeople() {
   const ids = [...new Set(deliveryRows.map((row) => row.salesperson_id || row.created_by).filter(Boolean))];
   deliverySalespersonNames = new Map();
   if (ids.length) {
-    const { data, error } = await client.from("profiles").select("id,full_name").in("id", ids).order("full_name");
-    if (error) throw error;
-    deliverySalespersonNames = new Map((data || []).map((user) => [user.id, user.full_name]));
+    const users = (await loadDeliveryProfiles(ids)).filter((user) => user?.full_name);
+    deliverySalespersonNames = new Map(users.map((user) => [user.id, user.full_name]));
   }
   const select = document.querySelector("#production-salesperson-filter");
   if (!select) return;
@@ -4972,6 +5000,7 @@ async function loadDeliveries() {
   try {
     const rows = await fetchAllDeliveryRows();
     if (token !== deliveryQueryToken) return;
+    deliveryLastFullRefreshAt = Date.now();
     deliveryRows = rows;
     if (page === "production-store.html") await loadProductionStoreSalespeople();
     if (page === "deliveries.html") await initializeDeliveryFilters();
@@ -5047,6 +5076,7 @@ async function refreshDeliveryRows() {
   const version = deliveryRowsVersion;
   const freshRows = await fetchAllDeliveryRows();
   if (document.hidden || token !== deliveryRefreshToken || version !== deliveryRowsVersion) return;
+  deliveryLastFullRefreshAt = Date.now();
   const oldById = new Map(deliveryRows.map((row) => [row.id, row]));
   const freshById = new Map(freshRows.map((row) => [row.id, row]));
   const changedIds = new Set();
@@ -5083,12 +5113,35 @@ async function refreshDeliveryRows() {
   await refreshUrgentDeliveryAlerts();
 }
 
-async function loadActiveVehicles() {
+async function loadActiveVehicles(force = false) {
+  if (!force && Date.now() - activeDeliveryVehiclesFetchedAt < DELIVERY_REFERENCE_CACHE_TTL_MS) {
+    return vehicleRows;
+  }
   const { data, error } = await client.from("vehicles").select("id,registration_number,description")
     .eq("active", true).order("registration_number").limit(100);
   if (error) throw error;
   vehicleRows = data || [];
+  activeDeliveryVehiclesFetchedAt = Date.now();
+  deliveryVehicleNameCache.clear();
+  vehicleRows.forEach((vehicle) => {
+    deliveryVehicleNameCache.set(vehicle.id, {
+      registration_number: vehicle.registration_number,
+      fetchedAt: activeDeliveryVehiclesFetchedAt
+    });
+  });
   return vehicleRows;
+}
+
+async function loadDeliveryVehicleName(id) {
+  const cached = deliveryVehicleNameCache.get(id);
+  if (cached && Date.now() - cached.fetchedAt < DELIVERY_REFERENCE_CACHE_TTL_MS) {
+    return cached.registration_number || "—";
+  }
+  const { data, error } = await client.from("vehicles").select("registration_number").eq("id", id).maybeSingle();
+  if (error) throw error;
+  const registrationNumber = data?.registration_number || null;
+  deliveryVehicleNameCache.set(id, { registration_number: registrationNumber, fetchedAt: Date.now() });
+  return registrationNumber || "—";
 }
 
 function deliveryActions(row) {
@@ -5730,21 +5783,24 @@ function openDeliveryItemsView(row, trigger) {
 async function openDeliveryView(row, trigger) {
   document.dispatchEvent(new CustomEvent("portal:mark-entry-read", { detail: row.id }));
   let requestedBy = profile.full_name;
-  const { data, error } = await client.from("profiles").select("full_name")
-    .eq("id", row.salesperson_id || row.created_by).maybeSingle();
-  if (error) {
-    toast(error.message || "Could not load the salesperson name.", "error");
-    return;
-  }
-  if (data?.full_name) requestedBy = data.full_name;
-  let vehicleName = vehicleRows.find((vehicle) => vehicle.id === row.vehicle_id)?.registration_number || "—";
-  if (row.vehicle_id && vehicleName === "—") {
-    const vehicleResult = await client.from("vehicles").select("registration_number").eq("id", row.vehicle_id).maybeSingle();
-    if (vehicleResult.error) {
-      toast(vehicleResult.error.message || "Could not load the vehicle details.", "error");
+  const salespersonId = row.salesperson_id || row.created_by;
+  if (salespersonId) {
+    try {
+      const [salesperson] = await loadDeliveryProfiles([salespersonId]);
+      if (salesperson?.full_name) requestedBy = salesperson.full_name;
+    } catch (error) {
+      toast(error.message || "Could not load the salesperson name.", "error");
       return;
     }
-    vehicleName = vehicleResult.data?.registration_number || "—";
+  }
+  let vehicleName = vehicleRows.find((vehicle) => vehicle.id === row.vehicle_id)?.registration_number || "—";
+  if (row.vehicle_id && vehicleName === "—") {
+    try {
+      vehicleName = await loadDeliveryVehicleName(row.vehicle_id);
+    } catch (error) {
+      toast(error.message || "Could not load the vehicle details.", "error");
+      return;
+    }
   }
   const items = Array.isArray(row.items) ? row.items : [];
   const addresses = deliveryAddress(row);
@@ -6273,7 +6329,7 @@ async function initDeliveries() {
     client.channel(`delivery-vehicles-${profile.id}`).on("postgres_changes", {
       event: "*", schema: "public", table: "vehicles"
     }, async () => {
-      await loadActiveVehicles();
+      await loadActiveVehicles(true);
       renderDeliveryRows();
     }).subscribe();
   }
@@ -6283,6 +6339,10 @@ async function initDeliveries() {
       await loadActiveVehicles();
       renderDeliveryRows();
     }
+  }, {
+    intervalMs: 5 * 60 * 1000,
+    visibilityMinAgeMs: 60 * 1000,
+    lastRefreshAt: () => deliveryLastFullRefreshAt
   });
 }
 
@@ -6292,6 +6352,7 @@ async function loadVehicles() {
   if (error) throw error;
   vehicleRows = data || [];
   renderVehicles();
+  vehicleListLastLoadedAt = Date.now();
 }
 
 function renderVehicles() {
@@ -6327,6 +6388,17 @@ function renderVehicles() {
 
 async function initVehicles() {
   const form = document.querySelector("#vehicle-form");
+  const refreshVehicleSummary = async () => {
+    await renderPeriodSummary("vehicle-tallies", "vehicle-period", "vehicles", [
+      { label: "Total", filters: {} },
+      { label: "Active", filters: { active: true } }
+    ]);
+    const used = await activityCount("deliveries", document.querySelector("#vehicle-period").value, {
+      dateColumn: "dispatched_at", filters: { vehicle_id: "notNull" }
+    });
+    document.querySelector("#vehicle-tallies").insertAdjacentHTML("beforeend",
+      `<div class="stat-card"><span>Used this period</span><strong>${used}</strong></div>`);
+  };
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector('[type="submit"]');
@@ -6347,18 +6419,8 @@ async function initVehicles() {
       form.reset();
       form.elements.id.value = "";
       form.elements.active.checked = true;
-      bindPeriodSummary("vehicle-period", async () => {
-        await renderPeriodSummary("vehicle-tallies", "vehicle-period", "vehicles", [
-          { label: "Total", filters: {} },
-          { label: "Active", filters: { active: true } }
-        ]);
-        const used = await activityCount("deliveries", document.querySelector("#vehicle-period").value, {
-          dateColumn: "dispatched_at", filters: { vehicle_id: "notNull" }
-        });
-        document.querySelector("#vehicle-tallies").insertAdjacentHTML("beforeend",
-          `<div class="stat-card"><span>Used this period</span><strong>${used}</strong></div>`);
-      });
       await loadVehicles();
+      await refreshVehicleSummary();
     } catch (error) {
       toast(error.message || "Could not save vehicle.", "error");
     } finally {
@@ -6371,10 +6433,15 @@ async function initVehicles() {
     form.elements.active.checked = true;
   });
   await loadVehicles();
+  bindPeriodSummary("vehicle-period", refreshVehicleSummary);
   client.channel(`vehicles-${profile.id}`).on("postgres_changes", {
     event: "*", schema: "public", table: "vehicles"
   }, () => { void loadVehicles(); }).subscribe();
-  startVisibleRefresh(() => loadVehicles());
+  startVisibleRefresh(() => loadVehicles(), {
+    intervalMs: 60000,
+    visibilityMinAgeMs: 60000,
+    lastRefreshAt: () => vehicleListLastLoadedAt
+  });
 }
 
 function riderTimeSlots() {
@@ -6664,6 +6731,7 @@ async function loadRiderJobs(reset = true) {
     document.querySelector("#route-more")?.classList.toggle("hidden", routeAdmin
       ? riderOffset >= routeRiderTotalCount
       : rows.length < RIDER_PAGE_SIZE);
+    riderJobsLastLoadedAt = Date.now();
   } catch (error) {
     if (token !== riderQueryToken) return;
     if (myJobs) {
@@ -7060,7 +7128,11 @@ async function initRiders() {
   client.channel(`rider-jobs-${profile.id}`).on("postgres_changes", {
     event: "*", schema: "public", table: "rider_jobs"
   }, () => { void loadRiderJobs(true); }).subscribe();
-  startVisibleRefresh(() => loadRiderJobs(true));
+  startVisibleRefresh(() => loadRiderJobs(true), {
+    intervalMs: 60000,
+    visibilityMinAgeMs: 60000,
+    lastRefreshAt: () => riderJobsLastLoadedAt
+  });
   const openId = new URLSearchParams(location.search).get("open");
   if (openId && !riderJobRows.some((row) => row.id === openId)) {
     const { data, error } = await client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at")
@@ -7259,7 +7331,11 @@ async function initMyJobs() {
     periodSelect.dispatchEvent(new Event("change"));
   }).subscribe();
   await loadRiderJobs(true);
-  startVisibleRefresh(() => loadRiderJobs(true));
+  startVisibleRefresh(() => loadRiderJobs(true), {
+    intervalMs: 60000,
+    visibilityMinAgeMs: 60000,
+    lastRefreshAt: () => riderJobsLastLoadedAt
+  });
   const openId = new URLSearchParams(location.search).get("open");
   if (openId && !riderJobRows.some((row) => row.id === openId)) {
     const { data, error } = await client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at")
