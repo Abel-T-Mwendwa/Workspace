@@ -16,3 +16,5 @@ id_ed25519
 *.pfx
 *.jks
 *.keystore
+EGRESS_AUDIT.md
+sql/
