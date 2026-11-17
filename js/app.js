@@ -1,7 +1,8 @@
 import { client } from "./core/supabase-client.js";
-import { endSession, isEndingSession, monitorSessionExpiry, sessionIsWithinLimit } from "./core/session.js";
+import { bindLogoutHandlers, loadAuthContext, watchSignedOut } from "./core/auth.js";
+import { endSession, monitorSessionExpiry, sessionIsWithinLimit } from "./core/session.js";
 import { startVisibleRefresh } from "./core/visible-refresh.js";
-import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
+import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal } from "./portal.js";
 import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./utils/delivery-slots.js";
 import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./utils/rider-request-slots.js";
 import { initShortcuts } from "./ui/shortcuts.js";
@@ -2121,49 +2122,15 @@ async function viewPassword(userId, button) {
   }
 }
 
-client.auth.onAuthStateChange((event) => {
-  if (event === "SIGNED_OUT" && !isEndingSession()) location.replace("./index.html");
-});
-function bindLogoutHandlers() {
-  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", async () => {
-    button.disabled = true;
-    try {
-      await endSession();
-    } catch (error) {
-      toast(error.message || "Could not sign out.", "error");
-      button.disabled = false;
-    }
-  }));
-}
+watchSignedOut();
 
 async function bootstrap() {
   initializeScrollableTables();
   try {
-    const { data: { session: activeSession }, error: sessionError } = await client.auth.getSession();
-    if (sessionError) throw sessionError;
-    session = activeSession;
-    if (page === "my-jobs.html") console.log("[TEMP-DEBUG] auth ready", Boolean(session), session?.user?.id); // TEMP-DEBUG
-    if (!session) return location.replace("./index.html");
-    if (!sessionIsWithinLimit()) {
-      await endSession("expired");
-      return;
-    }
-    const { data: currentProfile, error } = await client.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
-    if (error) throw error;
-    if (!currentProfile?.active) {
-      await endSession();
-      return;
-    }
-    profile = currentProfile;
-    if (page === "my-jobs.html") console.log("[TEMP-DEBUG] rider id resolved", profile.id); // TEMP-DEBUG
-    if (profile.role === "admin" && page === "my-jobs.html") {
-      location.replace("./home.html");
-      return;
-    }
-    if (!isPortalPageAllowed(page, profile)) {
-      location.replace(`./${profile.role === "user" ? "riders.html" : homePageForRole()}`);
-      return;
-    }
+    const auth = await loadAuthContext(page);
+    if (!auth) return;
+    session = auth.session;
+    profile = auth.profile;
     sessionExpiryTimer = monitorSessionExpiry({
       getSession: () => session,
       onError: (error) => toast(error.message || "Could not end the expired session.", "error")
