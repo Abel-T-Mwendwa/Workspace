@@ -1,4 +1,6 @@
 import { client } from "./core/supabase-client.js";
+import { endSession, isEndingSession, monitorSessionExpiry, sessionIsWithinLimit } from "./core/session.js";
+import { startVisibleRefresh } from "./core/visible-refresh.js";
 import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
 import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./utils/delivery-slots.js";
 import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./utils/rider-request-slots.js";
@@ -16,8 +18,6 @@ const historyDialog = document.querySelector("#history-dialog");
 historyDialog?.querySelector("[data-close-dialog]")?.addEventListener("click", () => historyDialog.close());
 const page = location.pathname.split("/").pop();
 const DEFAULT_GOODS_FILTER = "pending";
-const LOGIN_AT_KEY = "loginAt";
-const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const STATUS_BOARD_REFRESH_MS = 3 * 60 * 1000;
 const STATUS_BOARD_PROFILES_TTL_MS = 10 * 60 * 1000;
@@ -215,7 +215,6 @@ let deliveryClientSuggestionsTimer = null;
 let deliveryAutofilledContactName = "";
 let deliveryAutofilledContactNumber = "";
 let deliveryAutofilledAddressLines = new WeakSet();
-let endingSession = false;
 let sessionExpiryTimer = null;
 let designerChangeTrigger = null;
 let designerBodyOverflow = "";
@@ -240,84 +239,6 @@ let userSortKey = savedSortState?.key || (page === "designer.html" ? "date_neede
 let donePopoverTrigger = null;
 
 let assignmentNotifications = [];
-
-function storedLoginAt() {
-  try {
-    const timestamp = Number(localStorage.getItem(LOGIN_AT_KEY));
-    return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
-  } catch (error) {
-    console.error("Could not read the session timestamp.", error);
-    return null;
-  }
-}
-
-function clearLoginAt() {
-  try {
-    localStorage.removeItem(LOGIN_AT_KEY);
-  } catch (error) {
-    console.error("Could not clear the session timestamp.", error);
-  }
-}
-
-function sessionIsWithinLimit() {
-  const loginAt = storedLoginAt();
-  const age = Date.now() - loginAt;
-  return loginAt !== null && age >= 0 && age < SESSION_DURATION_MS;
-}
-
-let visibleRefreshTimer = null;
-
-function startVisibleRefresh(callback, options = {}) {
-  if (visibleRefreshTimer !== null) return visibleRefreshTimer;
-  const intervalMs = options.intervalMs ?? 30000;
-  const visibilityMinAgeMs = options.visibilityMinAgeMs ?? 0;
-  let lastRefreshCompletedAt = Date.now();
-  let refreshing = false;
-  const lastRefreshAt = options.lastRefreshAt || (() => lastRefreshCompletedAt);
-  const refresh = (visibilityReturn = false) => {
-    if (document.hidden || refreshing) return;
-    if (visibilityReturn && Date.now() - lastRefreshAt() < visibilityMinAgeMs) return;
-    refreshing = true;
-    Promise.resolve().then(callback).then(() => {
-      lastRefreshCompletedAt = Date.now();
-    }).catch((error) => {
-      toast(error.message || "Could not refresh this list.", "error");
-    }).finally(() => {
-      refreshing = false;
-    });
-  };
-  const timer = window.setInterval(() => {
-    refresh();
-  }, intervalMs);
-  visibleRefreshTimer = timer;
-  const onVisibilityChange = () => {
-    if (!document.hidden) refresh(true);
-  };
-  document.addEventListener("visibilitychange", onVisibilityChange);
-  window.addEventListener("pagehide", () => {
-    window.clearInterval(timer);
-    if (visibleRefreshTimer === timer) visibleRefreshTimer = null;
-    document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, { once: true });
-  return timer;
-}
-
-async function endSession(message) {
-  endingSession = true;
-  clearLoginAt();
-  const { error } = await client.auth.signOut();
-  location.replace(`./index.html${message ? "?session=expired" : ""}`);
-  if (error) throw error;
-}
-
-function monitorSessionExpiry() {
-  const checkExpiry = () => {
-    if (session && !sessionIsWithinLimit()) {
-      void endSession("expired").catch((error) => toast(error.message || "Could not end the expired session.", "error"));
-    }
-  };
-  sessionExpiryTimer = window.setInterval(checkExpiry, 60 * 1000);
-}
 
 function localDate(value) {
   if (!value) return "—";
@@ -2201,7 +2122,7 @@ async function viewPassword(userId, button) {
 }
 
 client.auth.onAuthStateChange((event) => {
-  if (event === "SIGNED_OUT" && !endingSession) location.replace("./index.html");
+  if (event === "SIGNED_OUT" && !isEndingSession()) location.replace("./index.html");
 });
 function bindLogoutHandlers() {
   document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", async () => {
@@ -2243,7 +2164,10 @@ async function bootstrap() {
       location.replace(`./${profile.role === "user" ? "riders.html" : homePageForRole()}`);
       return;
     }
-    monitorSessionExpiry();
+    sessionExpiryTimer = monitorSessionExpiry({
+      getSession: () => session,
+      onError: (error) => toast(error.message || "Could not end the expired session.", "error")
+    });
     window.addEventListener("pagehide", () => {
       if (sessionExpiryTimer !== null) window.clearInterval(sessionExpiryTimer);
       window.clearTimeout(artworkRealtimeTimer);

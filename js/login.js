@@ -1,4 +1,5 @@
 import { client } from "./core/supabase-client.js";
+import { clearLoginAt, LOGIN_AT_KEY, SESSION_DURATION_MS, sessionIsWithinLimit } from "./core/session.js";
 
 const form = document.querySelector("#login-form");
 const message = document.querySelector("#login-message");
@@ -8,9 +9,6 @@ const routes = {
   production: "home.html", production_store: "home.html", dispatch: "home.html", route_admin: "home.html", rider: "home.html",
   user: "riders.html"
 };
-const LOGIN_AT_KEY = "loginAt";
-const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
-
 function bindPasswordHint() {
   const input = form.elements.password;
   const hint = form.querySelector("[data-password-hint]");
@@ -21,25 +19,6 @@ function bindPasswordHint() {
   };
   input.addEventListener("input", update);
   update();
-}
-
-function clearLoginAt() {
-  try {
-    localStorage.removeItem(LOGIN_AT_KEY);
-  } catch (error) {
-    console.error("Could not clear the session timestamp.", error);
-  }
-}
-
-function sessionIsWithinLimit() {
-  try {
-    const loginAt = Number(localStorage.getItem(LOGIN_AT_KEY));
-    const age = Date.now() - loginAt;
-    return Number.isFinite(loginAt) && loginAt > 0 && age >= 0 && age < SESSION_DURATION_MS;
-  } catch (error) {
-    console.error("Could not read the session timestamp.", error);
-    return false;
-  }
 }
 
 async function routeSession(activeSession = null) {
