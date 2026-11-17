@@ -1,3 +1,4 @@
+import { client } from "./core/supabase-client.js";
 import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
 import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./utils/delivery-slots.js";
 import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./utils/rider-request-slots.js";
@@ -11,12 +12,6 @@ import { brandingModes, normalizeBrandingDetails } from "./utils/branding.js";
 import { toast } from "./ui/toast.js";
 import { setBusy } from "./ui/busy.js";
 
-const client = window.supabase.createClient(window.APP_CONFIG.supabaseUrl, window.APP_CONFIG.supabaseAnonKey, {
-  ...(typeof window.createEgressDebugFetch === "function"
-    ? { global: { fetch: window.createEgressDebugFetch() } }
-    : {}),
-  auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
-});
 const historyDialog = document.querySelector("#history-dialog");
 historyDialog?.querySelector("[data-close-dialog]")?.addEventListener("click", () => historyDialog.close());
 const page = location.pathname.split("/").pop();

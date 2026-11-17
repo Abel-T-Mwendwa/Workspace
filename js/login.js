@@ -1,6 +1,5 @@
-const client = window.supabase.createClient(window.APP_CONFIG.supabaseUrl, window.APP_CONFIG.supabaseAnonKey, {
-  auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
-});
+import { client } from "./core/supabase-client.js";
+
 const form = document.querySelector("#login-form");
 const message = document.querySelector("#login-message");
 
