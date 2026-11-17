@@ -1,5 +1,6 @@
 import { client } from "./core/supabase-client.js";
 import { bindLogoutHandlers, loadAuthContext, watchSignedOut } from "./core/auth.js";
+import { bindEditorKeyboard } from "./ui/dialog-keyboard.js";
 import { endSession, monitorSessionExpiry, sessionIsWithinLimit } from "./core/session.js";
 import { startVisibleRefresh } from "./core/visible-refresh.js";
 import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal } from "./portal.js";
@@ -12,6 +13,7 @@ import { escapeHtml } from "./utils/escape-html.js";
 import { debounce } from "./utils/debounce.js";
 import { lineFieldNames, lineFieldTitles, linesFromValue } from "./utils/lines.js";
 import { brandingModes, normalizeBrandingDetails } from "./utils/branding.js";
+import { today, dateKey, localDate, localDateTime, periodBounds } from "./utils/dates.js";
 import { toast } from "./ui/toast.js";
 import { setBusy } from "./ui/busy.js";
 
@@ -19,7 +21,6 @@ const historyDialog = document.querySelector("#history-dialog");
 historyDialog?.querySelector("[data-close-dialog]")?.addEventListener("click", () => historyDialog.close());
 const page = location.pathname.split("/").pop();
 const DEFAULT_GOODS_FILTER = "pending";
-const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const STATUS_BOARD_REFRESH_MS = 3 * 60 * 1000;
 const STATUS_BOARD_PROFILES_TTL_MS = 10 * 60 * 1000;
 const STATUS_COLOURS = {
@@ -240,19 +241,6 @@ let userSortKey = savedSortState?.key || (page === "designer.html" ? "date_neede
 let donePopoverTrigger = null;
 
 let assignmentNotifications = [];
-
-function localDate(value) {
-  if (!value) return "—";
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
-    ? new Date(`${value}T12:00:00+03:00`)
-    : new Date(value);
-  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "Africa/Nairobi" }).format(date);
-}
-
-function localDateTime(value) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Nairobi" }).format(new Date(value));
-}
 
 function sortRows(rows) {
   const direction = activeSort.direction === "asc" ? 1 : -1;
@@ -557,28 +545,6 @@ async function saveWorkNote(authorRole, textarea, saveButton, dialog) {
 
 function updateWorkNoteSaveButton(textarea, saveButton) {
   saveButton.disabled = textarea.disabled || !textarea.value.trim() || textarea.value.trim().length > 2000;
-}
-
-function dateKey(value) {
-  if (!value) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value);
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit"
-  }).format(new Date(value));
-}
-
-function periodBounds(period) {
-  const key = dateKey(today);
-  if (period === "week") {
-    const date = new Date(`${key}T00:00:00Z`);
-    date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
-    const start = date.toISOString().slice(0, 10);
-    date.setUTCDate(date.getUTCDate() + 7);
-    const end = date.toISOString().slice(0, 10);
-    return (value) => dateKey(value) >= start && dateKey(value) < end;
-  }
-  const length = period === "day" ? 10 : period === "month" ? 7 : 4;
-  return (value) => dateKey(value).slice(0, length) === key.slice(0, length);
 }
 
 function tallyMarkup(items) {
