@@ -2,7 +2,7 @@ import { escapeHtml } from "../utils/escape-html.js";
 import { toast } from "../ui/toast.js";
 import { setBusy } from "../ui/busy.js";
 import { lineFieldTitles, linesFromValue, lineSummary } from "../utils/lines.js";
-import { bindEditorKeyboard } from "../dialog-keyboard.js";
+import { bindEditorKeyboard } from "../ui/dialog-keyboard.js";
 
 let lineDialog;
 let lineDialogState;

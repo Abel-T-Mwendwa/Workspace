@@ -1,6 +1,7 @@
 import { canSeeStatusBoard, hasDispatchAccess, hasProductionAccess, hasProductionStoreAccess, hasRiderRequestAccess, hasRouteAdminAccess, homePageForRole, initPortal, isPortalPageAllowed } from "./portal.js";
-import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./delivery-slots.js";
-import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./rider-request-slots.js";
+import { currentNairobiTime, deliverySlotLabel, deliverySlotOptions, hourlySlots } from "./utils/delivery-slots.js";
+import { riderRequestAvailability, riderRequestSlots, validateRiderRequestSlot } from "./utils/rider-request-slots.js";
+import { initShortcuts } from "./ui/shortcuts.js";
 import { lineFieldMarkup, initLineDialog } from "./features/line-dialog.js";
 import { brandingFieldMarkup, initBrandingDialog } from "./features/branding-dialog.js";
 import { escapeHtml } from "./utils/escape-html.js";
@@ -79,6 +80,11 @@ const ROUTE_STATUS_CHIPS = [
 ];
 let session;
 let profile;
+initShortcuts({
+  getPage: () => page,
+  getProfile: () => profile,
+  onEscape: () => closeDonePopover()
+});
 let allRows = [];
 async function saveLines(recordId, field, lines) {
   const { data, error } = await client.from("artwork_requests").update({ [field]: lines })
@@ -237,81 +243,6 @@ let activeSort = savedSortState || (page === "designer.html"
     : { key: "sr", direction: "asc" });
 let userSortKey = savedSortState?.key || (page === "designer.html" ? "date_needed" : ["deliveries.html", "production-store.html"].includes(page) ? "delivery_schedule" : null);
 let donePopoverTrigger = null;
-
-function isTypingTarget(target) {
-  return target instanceof Element
-    && Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
-}
-
-function shortcutButton(root, selector) {
-  const button = root?.querySelector(selector);
-  return button && !button.disabled && !button.closest(".hidden") && button.getClientRects().length ? button : null;
-}
-
-function handleKeyboardShortcuts(event) {
-  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
-  const openDialogs = [...document.querySelectorAll("dialog[open]")];
-  const dialog = openDialogs.at(-1);
-
-  if (event.key === "Escape") {
-    closeDonePopover();
-    if (!dialog) return;
-    event.preventDefault();
-    if (typeof dialog.requestClose === "function") {
-      dialog.requestClose();
-    } else {
-      const cancelEvent = new Event("cancel", { cancelable: true });
-      dialog.dispatchEvent(cancelEvent);
-      if (!cancelEvent.defaultPrevented) dialog.close();
-    }
-    return;
-  }
-
-  if (isTypingTarget(event.target)) return;
-
-  if (event.key === "+" || event.key === "=" && event.shiftKey) {
-    const addButton = shortcutButton(dialog, "[data-shortcut-add]")
-      || (!dialog && page === "sales.html" && profile?.role === "salesperson" ? shortcutButton(document, "#new-request") : null)
-      || (!dialog && page === "deliveries.html" && ["salesperson", "admin"].includes(profile?.role)
-        ? shortcutButton(document, "#delivery-form-toggle") : null);
-    if (addButton) {
-      event.preventDefault();
-      addButton.click();
-    }
-    return;
-  }
-
-  if (event.key === "-" || event.key === "−") {
-    const focusedRow = event.target instanceof Element
-      ? event.target.closest(".line-editor-row, .branding-detail-row, .delivery-item-row") : null;
-    const row = focusedRow || dialog?.querySelector(".line-editor-row:last-child, .branding-detail-row:last-child, .delivery-item-row:last-child");
-    const removeButton = shortcutButton(row, "[data-shortcut-remove]")
-      || (dialog?.id === "admin-edit-dialog" && profile?.role === "admin"
-        ? shortcutButton(dialog, "#admin-delete") : null);
-    if (removeButton) {
-      event.preventDefault();
-      removeButton.click();
-    }
-    return;
-  }
-
-  if (event.key === "Enter" && !(event.target instanceof Element && event.target.closest("button"))) {
-    const saveButton = shortcutButton(dialog, "[data-shortcut-save]");
-    if (saveButton) {
-      event.preventDefault();
-      saveButton.click();
-      return;
-    }
-    const form = dialog?.querySelector("form") || (event.target instanceof Element ? event.target.closest("form") : null);
-    const submitButton = form?.querySelector('[type="submit"]:not(:disabled)');
-    if (form && submitButton) {
-      event.preventDefault();
-      form.requestSubmit(submitButton);
-    }
-  }
-}
-
-document.addEventListener("keydown", handleKeyboardShortcuts);
 
 let assignmentNotifications = [];
 
