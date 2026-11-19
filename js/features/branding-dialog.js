@@ -1,6 +1,5 @@
 import { escapeHtml } from "../utils/escape-html.js";
 import { toast } from "../ui/toast.js";
-import { setBusy } from "../ui/busy.js";
 import { brandingModes, normalizeBrandingDetails, brandingSummary } from "../utils/branding.js";
 import { bindEditorKeyboard } from "../ui/dialog-keyboard.js";
 

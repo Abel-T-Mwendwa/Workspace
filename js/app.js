@@ -38,8 +38,6 @@ configureActivityPanel({
 });
 configureTableSort({ page, rerender: rerenderSortedPage });
 
-let users = [];
-
 let sessionExpiryTimer = null;
 
 function rerenderSortedPage() {

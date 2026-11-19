@@ -1,5 +1,6 @@
 import { client } from "./core/supabase-client.js";
 import { clearLoginAt, LOGIN_AT_KEY, SESSION_DURATION_MS, sessionIsWithinLimit } from "./core/session.js";
+import { bindPasswordHints } from "./ui/password-hints.js";
 
 const form = document.querySelector("#login-form");
 const message = document.querySelector("#login-message");
@@ -9,18 +10,6 @@ const routes = {
   production: "home.html", production_store: "home.html", dispatch: "home.html", route_admin: "home.html", rider: "home.html",
   user: "riders.html"
 };
-function bindPasswordHint() {
-  const input = form.elements.password;
-  const hint = form.querySelector("[data-password-hint]");
-  const update = () => {
-    hint.textContent = input.value.length >= 8
-      ? "Password length is valid."
-      : `Password must be at least 8 characters. (${input.value.length}/8)`;
-  };
-  input.addEventListener("input", update);
-  update();
-}
-
 async function routeSession(activeSession = null) {
   let session = activeSession;
   if (!session) {
@@ -99,7 +88,7 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-bindPasswordHint();
+bindPasswordHints(form);
 routeSession().catch((error) => {
   message.textContent = error.message || "Could not verify your session. Please try again.";
 });
