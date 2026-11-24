@@ -469,6 +469,7 @@ function dispatchProgressSignature(deliveryId) {
 async function loadDispatchProgress(deliveryIds, replaceAll = false) {
   if (page !== "deliveries.html") return new Set();
   const dispatchScreen = isDispatchScreen();
+  const loadTrips = dispatchScreen || profile.role === "salesperson";
   const ids = [...new Set(deliveryIds)];
   const previous = new Map(ids.map((id) => [id, dispatchProgressSignature(id)]));
   if (replaceAll) {
@@ -496,11 +497,11 @@ async function loadDispatchProgress(deliveryIds, replaceAll = false) {
       client.from("delivery_request_progress")
         .select("delivery_id,job_card_total,released,received,in_production,packed,delivered,available_to_receive,available_to_pack,balance,goods_status,production_state,dispatch_state,board_stage")
         .in("delivery_id", batch),
-      dispatchScreen ? client.from("dispatch_trips")
+      loadTrips ? client.from("dispatch_trips")
         .select("id,delivery_id,vehicle,rider_id,status,delivered_on,delivery_address,note,voided_at")
         .in("delivery_id", batch)
         .order("created_at", { ascending: false }) : Promise.resolve(emptyResult),
-      dispatchScreen ? client.from("dispatch_trip_items")
+      loadTrips ? client.from("dispatch_trip_items")
         .select("id,trip_id,delivery_id,item_key,qty_packed,qty_delivered")
         .in("delivery_id", batch) : Promise.resolve(emptyResult)
     ]);
@@ -658,8 +659,18 @@ function productionStoreItemSummary(items, deliveryId = null) {
 
 function deliveryDetailsNeeded(row) {
   return deliveryMissingAddress(row)
-    && row.dispatch_status !== "Delivered"
-    && !row.delivered_at;
+    && dispatchRequestProgress(row.id)?.dispatch_state !== "Delivered";
+}
+
+function deliveryPackedAddressUrgent(row) {
+  if (dispatchRequestProgress(row.id)?.dispatch_state === "Delivered") return false;
+  const items = new Map((Array.isArray(row.items) ? row.items : [])
+    .map((item) => [item.item_key, item]));
+  return (dispatchTripsByDelivery.get(row.id) || []).some((trip) =>
+    !trip.voided_at && ["Packed", "Out for delivery"].includes(trip.status)
+      && !String(trip.delivery_address || "").trim()
+      && (dispatchTripItemsByTripId.get(trip.id) || []).some((tripItem) =>
+        tripItem.qty_packed > 0 && !String(items.get(tripItem.item_key)?.address || "").trim()));
 }
 
 function deliverySalespersonName(row) {
@@ -3132,26 +3143,28 @@ async function refreshUrgentDeliveryAlerts() {
     return;
   }
   try {
+    const isUrgent = deliveryPackedAddressUrgent;
     urgentDeliveryRows = deliveryRows.filter((row) =>
-      (row.salesperson_id || row.created_by) === profile.id && deliveryDetailsNeeded(row));
+      (row.salesperson_id || row.created_by) === profile.id
+        && (deliveryDetailsNeeded(row) || isUrgent(row)));
     urgentDeliveryRows.sort((left, right) =>
-      Number(deliveryAddressUrgent(right)) - Number(deliveryAddressUrgent(left))
+      Number(isUrgent(right)) - Number(isUrgent(left))
       || new Date(left.created_at) - new Date(right.created_at));
     const activeKeys = new Set(urgentDeliveryRows.map((row) =>
-      `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`));
+      `${row.id}:${isUrgent(row) ? "urgent" : "details"}`));
     deliveryPopupShownKeys.forEach((key) => {
       if (!activeKeys.has(key)) deliveryPopupShownKeys.delete(key);
     });
     const snoozed = deliveryPopupState("deliveryDetailsPopupSnoozeById");
     const now = Date.now();
     const visibleRows = urgentDeliveryRows.filter((row) => {
-      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      const key = `${row.id}:${isUrgent(row) ? "urgent" : "details"}`;
       return Number(snoozed[key] || 0) <= now;
     });
     const dialog = document.querySelector("#urgent-deliveries-dialog");
     const list = document.querySelector("#urgent-deliveries-list");
-    list.innerHTML = visibleRows.map((row) => `<article class="urgent-delivery-item"${deliveryAddressUrgent(row) ? ' data-urgent="true"' : ""}>
-      <div><strong>${deliveryAddressUrgent(row) ? "URGENT · " : ""}${escapeHtml(row.client_name || "—")}</strong><span>SO ${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</span><span>Delivery ${escapeHtml(row.delivery_date || "—")}</span><span>Waiting ${escapeHtml(deliveryWaitDuration(row.created_at))}</span></div>
+    list.innerHTML = visibleRows.map((row) => `<article class="urgent-delivery-item"${isUrgent(row) ? ' data-urgent="true"' : ""}>
+      <div><strong>${isUrgent(row) ? "URGENT · " : ""}${escapeHtml(row.client_name || "—")}</strong><span>SO ${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</span><span>Delivery ${escapeHtml(row.delivery_date || "—")}</span><span>Waiting ${escapeHtml(deliveryWaitDuration(row.created_at))}</span></div>
       <button type="button" class="primary" data-fill-urgent-delivery="${escapeHtml(row.id)}">Fill now</button>
     </article>`).join("");
     if (!urgentDeliveryRows.length) {
@@ -3159,15 +3172,15 @@ async function refreshUrgentDeliveryAlerts() {
       return;
     }
     const newlyVisible = visibleRows.filter((row) => {
-      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      const key = `${row.id}:${isUrgent(row) ? "urgent" : "details"}`;
       return !deliveryPopupShownKeys.has(key);
     });
-    const urgentVisible = visibleRows.filter(deliveryAddressUrgent);
+    const urgentVisible = visibleRows.filter(isUrgent);
     const urgentReminderReady = urgentVisible.length > 0
       && (!urgentPopupLastShownAt || now - urgentPopupLastShownAt >= 60 * 60 * 1000);
     if (!newlyVisible.length && !urgentReminderReady) return;
     newlyVisible.forEach((row) => {
-      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      const key = `${row.id}:${isUrgent(row) ? "urgent" : "details"}`;
       deliveryPopupShownKeys.add(key);
     });
     if (urgentReminderReady) urgentPopupLastShownAt = now;
@@ -3189,12 +3202,12 @@ function bindUrgentDeliveryPopup() {
     const snoozed = deliveryPopupState("deliveryDetailsPopupSnoozeById");
     const snoozeUntil = Date.now() + 60 * 60 * 1000;
     urgentDeliveryRows.forEach((row) => {
-      const key = `${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`;
+      const key = `${row.id}:${deliveryPackedAddressUrgent(row) ? "urgent" : "details"}`;
       snoozed[key] = snoozeUntil;
     });
     sessionStorage.setItem("deliveryDetailsPopupSnoozeById", JSON.stringify(snoozed));
     urgentDeliveryRows.forEach((row) => {
-      deliveryPopupShownKeys.delete(`${row.id}:${deliveryAddressUrgent(row) ? "urgent" : "details"}`);
+      deliveryPopupShownKeys.delete(`${row.id}:${deliveryPackedAddressUrgent(row) ? "urgent" : "details"}`);
     });
     urgentPopupLastShownAt = Date.now();
   });
