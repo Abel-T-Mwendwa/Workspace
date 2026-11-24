@@ -6064,3 +6064,49 @@ body.status-board-page {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+#dispatch-dialog:has(.dispatch-deliver-trip) {
+  width: min(420px, calc(100vw - 24px));
+  max-width: 420px;
+}
+
+.dispatch-deliver-trip {
+  display: grid;
+  gap: 10px;
+}
+
+.dispatch-deliver-trip h3 {
+  margin: 0;
+  color: #36445c;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dispatch-deliver-trip label {
+  gap: 7px;
+  font-size: 12px;
+}
+
+.dispatch-deliver-trip details[open] {
+  display: grid;
+  gap: 6px;
+}
+
+.dispatch-deliver-trip summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.dispatch-deliver-trip summary::-webkit-details-marker {
+  display: none;
+}
+
+.dispatch-deliver-trip details button {
+  justify-self: start;
+  padding: 6px 9px;
+  font-size: 12px;
+}

@@ -22,7 +22,7 @@ const DEFAULT_GOODS_FILTER = "pending";
 const DELIVERY_ROLE_STATUS_LABELS = {
   production: [
     { value: "pending", label: "Pending", style: "pending" },
-    { value: "Ready", label: "Ready", style: "ready" },
+    { value: "Fully received", label: "Fully received", style: "ready" },
     { value: "all", label: "All", style: "all" }
   ],
   dispatch: [
@@ -61,7 +61,9 @@ let dispatchItemProgressByDelivery = new Map();
 let dispatchRequestProgressById = new Map();
 let dispatchTripsByDelivery = new Map();
 let dispatchTripItemsByTripId = new Map();
-let dispatchDialogState = { deliveryId: null, selectedTripId: "new", vehicle: "", riderId: "", note: "" };
+let dispatchDialogState = { deliveryId: null, mode: null, trigger: null };
+let deliveryVisibleLimit = 20;
+let deliveryListFilterSignature = null;
 let deliveryOriginalItemPairs = null;
 let deliveryItemCheckSequence = 0;
 let deliveryHardConflicts = [];
@@ -465,7 +467,8 @@ function dispatchProgressSignature(deliveryId) {
 }
 
 async function loadDispatchProgress(deliveryIds, replaceAll = false) {
-  if (!isDispatchScreen()) return new Set();
+  if (page !== "deliveries.html") return new Set();
+  const dispatchScreen = isDispatchScreen();
   const ids = [...new Set(deliveryIds)];
   const previous = new Map(ids.map((id) => [id, dispatchProgressSignature(id)]));
   if (replaceAll) {
@@ -485,20 +488,21 @@ async function loadDispatchProgress(deliveryIds, replaceAll = false) {
   for (let index = 0; index < ids.length; index += 100) {
     const batch = ids.slice(index, index + 100);
     if (!batch.length) continue;
+    const emptyResult = { data: [], error: null };
     const [itemResult, requestResult, tripResult, tripItemResult] = await Promise.all([
-      client.from("delivery_item_progress")
+      dispatchScreen ? client.from("delivery_item_progress")
         .select("delivery_id,item_key,item_name,so_number,job_card_total,released,received,in_production,packed,delivered,available_to_receive,available_to_pack")
-        .in("delivery_id", batch),
+        .in("delivery_id", batch) : Promise.resolve(emptyResult),
       client.from("delivery_request_progress")
         .select("delivery_id,job_card_total,released,received,in_production,packed,delivered,available_to_receive,available_to_pack,balance,goods_status,production_state,dispatch_state,board_stage")
         .in("delivery_id", batch),
-      client.from("dispatch_trips")
+      dispatchScreen ? client.from("dispatch_trips")
         .select("id,delivery_id,vehicle,rider_id,status,delivered_on,delivery_address,note,voided_at")
         .in("delivery_id", batch)
-        .order("created_at", { ascending: false }),
-      client.from("dispatch_trip_items")
+        .order("created_at", { ascending: false }) : Promise.resolve(emptyResult),
+      dispatchScreen ? client.from("dispatch_trip_items")
         .select("id,trip_id,delivery_id,item_key,qty_packed,qty_delivered")
-        .in("delivery_id", batch)
+        .in("delivery_id", batch) : Promise.resolve(emptyResult)
     ]);
     for (const result of [itemResult, requestResult, tripResult, tripItemResult]) {
       if (result.error) throw result.error;
@@ -638,17 +642,6 @@ function deliveryItemSummary(items) {
   if (!lines.length) return "—";
   const first = `${escapeHtml(lines[0].item_name)}${lines[0].quantity ? ` × ${escapeHtml(lines[0].quantity)} pcs` : ""}`;
   return `${first}${lines.length > 1 ? ` +${lines.length - 1} more` : ""}`;
-}
-
-function dispatchItemsSummary(row) {
-  const items = Array.isArray(row.items) ? row.items : [];
-  return items.length ? items.map((item) => {
-    const progress = dispatchItemProgress(row.id, item.item_key);
-    const status = progress
-      ? `Received ${progress.received}/${progress.job_card_total} · In production ${progress.in_production} · Packed ${progress.packed} · Delivered ${progress.delivered}`
-      : "Progress unavailable";
-    return `<div>${escapeHtml(item.so_number || "—")} · ${escapeHtml(item.item_name || "Item")} · ${escapeHtml(status)}</div>`;
-  }).join("") : "—";
 }
 
 function productionLatestReleaseLabel(deliveryId, itemKey) {
@@ -1753,9 +1746,9 @@ function restoreDeliveryFilters() {
     saved = JSON.parse(sessionStorage.getItem(DELIVERY_FILTERS_KEY) || "null");
   } catch (error) {
     console.error("Could not read delivery filters for this session.", error);
-    return;
+    return false;
   }
-  if (!saved || typeof saved !== "object") return;
+  if (!saved || typeof saved !== "object") return false;
   const datePattern = /^\d{4}-\d{2}-\d{2}$/;
   if (datePattern.test(saved.from || "")) document.querySelector("#delivery-date-from").value = saved.from;
   if (datePattern.test(saved.to || "")) document.querySelector("#delivery-date-to").value = saved.to;
@@ -1768,6 +1761,7 @@ function restoreDeliveryFilters() {
   if (typeof saved.salesperson === "string") {
     document.querySelector("#delivery-salesperson").dataset.savedValue = saved.salesperson;
   }
+  return true;
 }
 
 async function loadDeliveryFilterSalespeople() {
@@ -1815,7 +1809,7 @@ async function loadProductionStoreSalespeople() {
 }
 
 async function initializeDeliveryFilters() {
-  restoreDeliveryFilters();
+  const hasSavedFilters = restoreDeliveryFilters();
   await loadDeliveryFilterSalespeople();
   const roleChipMode = isDeliveryRoleChipMode();
   document.querySelector("#delivery-role-status-chips").classList.toggle("hidden", !roleChipMode && !showsDeliveryUrgentPill());
@@ -1824,7 +1818,18 @@ async function initializeDeliveryFilters() {
     document.querySelector("#delivery-dispatch-filter").closest("label").classList.add("hidden");
     document.querySelector("#delivery-production-filter").value = "";
     document.querySelector("#delivery-dispatch-filter").value = "";
-    deliveryRoleStatusFilter = "pending";
+    deliveryRoleStatusFilter = hasDispatchAccess(profile) ? "all" : "pending";
+  } else if (isDispatchScreen()) {
+    const productionFilter = document.querySelector("#delivery-production-filter");
+    const dispatchFilter = document.querySelector("#delivery-dispatch-filter");
+    productionFilter.querySelectorAll("option").forEach((option) => {
+      if (option.value === "Not ready") option.textContent = "Not fully received";
+      else if (option.value === "Ready") option.textContent = "Fully received";
+    });
+    if (!hasSavedFilters || (productionFilter.value === "Not ready" && dispatchFilter.value === "Not delivered")) {
+      productionFilter.value = "";
+      dispatchFilter.value = "";
+    }
   }
   const filterSelectors = [
     "#delivery-date-from",
@@ -1847,7 +1852,7 @@ async function initializeDeliveryFilters() {
     deliveryBrandingFilter = "all";
     deliveryUrgentFilter = false;
     if (roleChipMode) {
-      deliveryRoleStatusFilter = "pending";
+      deliveryRoleStatusFilter = hasDispatchAccess(profile) ? "all" : "pending";
       document.querySelector("#delivery-search").value = "";
     }
     saveDeliveryFilters();
@@ -1860,11 +1865,11 @@ async function initializeDeliveryFilters() {
     deliveryBrandingFilter = "all";
     deliveryUrgentFilter = false;
     if (roleChipMode) {
-      deliveryRoleStatusFilter = "pending";
+      deliveryRoleStatusFilter = hasDispatchAccess(profile) ? "all" : "pending";
       document.querySelector("#delivery-search").value = "";
     } else {
-      document.querySelector("#delivery-production-filter").value = "Not ready";
-      document.querySelector("#delivery-dispatch-filter").value = "Not delivered";
+      document.querySelector("#delivery-production-filter").value = isDispatchScreen() ? "" : "Not ready";
+      document.querySelector("#delivery-dispatch-filter").value = isDispatchScreen() ? "" : "Not delivered";
     }
     saveDeliveryFilters();
     renderDeliveryRows();
@@ -2020,6 +2025,25 @@ async function loadActiveVehicles(force = false) {
     .eq("active", true).order("registration_number").limit(100);
   if (error) throw error;
   vehicleRows = data || [];
+  let mostRecentlyUsedVehicle = null;
+  if (vehicleRows.length && (profile.role === "admin" || hasDispatchAccess(profile))) {
+    const activeVehicleNames = new Set(vehicleRows.map((vehicle) => vehicle.registration_number));
+    const pageSize = 1000;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data: trips, error: tripError } = await client.from("dispatch_trips")
+        .select("vehicle")
+        .order("created_at", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+      if (tripError) throw tripError;
+      mostRecentlyUsedVehicle = trips?.find((trip) => activeVehicleNames.has(trip.vehicle))?.vehicle || null;
+      if (mostRecentlyUsedVehicle || (trips || []).length < pageSize) break;
+    }
+  }
+  vehicleRows.sort((left, right) => {
+    if (left.registration_number === mostRecentlyUsedVehicle) return -1;
+    if (right.registration_number === mostRecentlyUsedVehicle) return 1;
+    return left.registration_number.localeCompare(right.registration_number);
+  });
   activeDeliveryVehiclesFetchedAt = Date.now();
   deliveryVehicleNameCache.clear();
   vehicleRows.forEach((vehicle) => {
@@ -2046,17 +2070,14 @@ async function loadDeliveryVehicleName(id) {
 function deliveryActions(row) {
   if (isProductionStoreMode()) return "";
   const role = profile.role;
-  const productionAccess = role === "admin" || hasProductionAccess(profile);
   const dispatchAccess = role === "admin" || hasDispatchAccess(profile);
-  const isAssignedSalesperson = role !== "admin" && row.salesperson_id === profile.id;
-  const dispatchProgress = dispatchRequestProgress(row.id);
-  if (isDispatchScreen() ? dispatchProgress?.dispatch_state === "Delivered" : row.dispatch_status === "Delivered") return "";
   const actions = [];
-  if (productionAccess && row.production_status !== "Ready" && !isAssignedSalesperson) {
-    const goodsReady = ["ready", "partial"].includes(deliveryGoodsStatus(row));
-    actions.push(`<button class="primary" data-delivery-ready="${escapeHtml(row.id)}"${goodsReady ? "" : " disabled"}>Ready</button>`);
+  if (dispatchAccess) {
+    const hasOpenTrip = (dispatchTripsByDelivery.get(row.id) || [])
+      .some((trip) => !trip.voided_at && ["Packed", "Out for delivery"].includes(trip.status));
+    actions.push(`<button type="button" class="primary" data-dispatch-pack="${escapeHtml(row.id)}">Pack</button>`);
+    actions.push(`<button type="button" class="secondary" data-dispatch-deliver="${escapeHtml(row.id)}"${hasOpenTrip ? "" : " disabled"}>Delivered</button>`);
   }
-  if (dispatchAccess) actions.push(`<button type="button" class="primary" data-dispatch-open="${escapeHtml(row.id)}">Dispatch</button>`);
   return actions.join("");
 }
 
@@ -2104,8 +2125,9 @@ function deliveryRoleStatusMatches(row, value) {
   if (value === "all") return true;
   if (value === "urgent") return deliveryAddressUrgent(row);
   if (!hasDispatchAccess(profile)) {
-    if (value === "pending") return row.production_status === "Not ready";
-    return row.production_status === value;
+    const productionState = dispatchRequestProgress(row.id)?.production_state;
+    if (value === "pending") return Boolean(productionState) && productionState !== "Fully received";
+    return productionState === value;
   }
   if (value === "pending") return row.dispatch_status === "Not delivered";
   return row.dispatch_status === value;
@@ -2206,7 +2228,19 @@ function deliveryMatchesBaseFilters(row) {
   if (!isDeliveryRoleChipMode()) {
     const production = document.querySelector("#delivery-production-filter").value;
     const dispatch = document.querySelector("#delivery-dispatch-filter").value;
-    if (production && row.production_status !== production) return false;
+    if (production) {
+      const productionState = page === "deliveries.html"
+        ? dispatchRequestProgress(row.id)?.production_state
+        : null;
+      const matchesProduction = page !== "deliveries.html"
+        ? row.production_status === production
+        : Boolean(productionState) && (production === "Not ready"
+          ? productionState !== "Fully received"
+          : production === "Ready"
+            ? productionState === "Fully received"
+            : productionState === production);
+      if (!matchesProduction) return false;
+    }
     if (dispatch === "not-packed" && !(row.dispatch_status === "Not delivered" && !row.dispatched_at)) return false;
     if (dispatch === "packed" && !(row.dispatch_status === "Not delivered" && Boolean(row.dispatched_at))) return false;
     if (dispatch && !["not-packed", "packed"].includes(dispatch) && row.dispatch_status !== dispatch) return false;
@@ -2215,8 +2249,6 @@ function deliveryMatchesBaseFilters(row) {
 }
 
 function deliveryRowMarkup(row) {
-  const dispatchView = isDispatchScreen();
-  const requestProgress = dispatchView ? dispatchRequestProgress(row.id) : null;
   const contactName = row.contact_name?.trim() || "";
   const contactNumber = row.contact_number?.trim() || "";
   const salespersonContact = `${escapeHtml(contactName || "—")}${contactName && contactNumber ? " · " : " "}${escapeHtml(contactNumber || "—")}`;
@@ -2224,7 +2256,7 @@ function deliveryRowMarkup(row) {
   const clientContact = `${escapeHtml(row.client_name || "—")}${hasProductionAccess(profile) || hasDispatchAccess(profile) ? "" : `<br><span class="muted">${profile.role === "salesperson"
     ? salespersonContact
     : contactDetails}</span>`}`;
-  const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${dispatchView ? dispatchItemsSummary(row) : deliveryItemSummary(row.items)}</td>`;
+  const itemsCell = `<td class="delivery-items-cell" data-delivery-items="${escapeHtml(row.id)}" role="button" tabindex="0" aria-label="View all items and SO numbers">${deliveryItemSummary(row.items)}</td>`;
   const brandingCell = `<td>${escapeHtml(deliveryBrandingModes(row).join(", ") || "—")}</td>`;
   const addressCell = `<td><span class="delivery-address-cell" title="${escapeHtml(deliveryAddress(row))}">${escapeHtml(deliveryAddress(row) || "—")}</span></td>`;
   const soNumberCell = `<td>${deliverySoNumberCell(row)}</td>`;
@@ -2235,8 +2267,6 @@ function deliveryRowMarkup(row) {
     ? `<td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td><td>${escapeHtml(row.client_name || "—")}</td>${productionStoreItemsCell(row)}<td>${escapeHtml(row.delivery_date || "—")}</td><td>${currentDeliveryGoodsStatus(row)
       ? `<span class="delivery-status-${currentDeliveryGoodsStatus(row) === "ready" ? "green" : currentDeliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${currentDeliveryGoodsStatus(row) === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(currentDeliveryGoodsStatus(row))}</span>`
       : "—"}</td>`
-    : dispatchView
-    ? `<td>${groupedClientContact}</td>${addressCell}${soNumberCell}${itemsCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${escapeHtml(requestProgress?.goods_status || "—")}</td>`
     : page === "deliveries.html" && deliveryOperationalRole() === "production"
     ? `${deliveryDateCell}<td>${groupedClientContact}</td>${addressCell}${soNumberCell}${itemsCell}${brandingCell}<td>${escapeHtml(deliverySalespersonName(row))}</td><td>${deliveryGoodsStatus(row)
       ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
@@ -2250,12 +2280,29 @@ function deliveryRowMarkup(row) {
       ? `<span class="delivery-status-${deliveryGoodsStatus(row) === "ready" ? "green" : deliveryGoodsStatus(row) === "partial" ? "orange" : "red"}">${deliveryGoodsStatusLabel(deliveryGoodsStatus(row))}</span>`
       : "—"}</td>`
     : `<td><strong>${escapeHtml(row.ref_no)}</strong></td><td>${escapeHtml(localDateTime(row.created_at))}</td><td>${clientContact}</td>${itemsCell}`;
-  const productionCell = `<td>${dispatchView ? escapeHtml(requestProgress?.production_state || "—") : deliveryProductionStatusMarkup(row)}</td>`;
+  const requestProgress = page === "deliveries.html" ? dispatchRequestProgress(row.id) : null;
+  const productionStatusMarkup = page !== "deliveries.html"
+    ? deliveryProductionStatusMarkup(row)
+    : requestProgress
+      ? deliveryProductionStatusMarkup({ ...row, production_status: requestProgress.production_state, ready_at: null })
+      : "—";
+  const productionNumbers = requestProgress
+    ? `<br><small class="muted">Released ${escapeHtml(requestProgress.released)}/${escapeHtml(requestProgress.job_card_total)} · In production ${escapeHtml(requestProgress.in_production)}</small>`
+    : "";
+  const productionCell = `<td>${productionStatusMarkup}${productionNumbers}</td>`;
   const urgent = deliveryAddressUrgent(row);
   const missingAddressMarker = profile.role === "salesperson" && urgent
       ? '<br><small class="delivery-address-urgent">URGENT: address missing</small>'
       : "";
-  const dispatchCell = `<td>${dispatchView ? escapeHtml(requestProgress?.dispatch_state || "—") : deliveryDispatchStatusMarkup(row)}${missingAddressMarker}</td>`;
+  const deliveredSuffix = requestProgress?.delivered > 0
+    ? ` <small class="muted">Delivered ${escapeHtml(requestProgress.delivered)}/${escapeHtml(requestProgress.job_card_total)}</small>`
+    : "";
+  const dispatchStatusMarkup = page !== "deliveries.html"
+    ? deliveryDispatchStatusMarkup(row)
+    : requestProgress
+      ? deliveryDispatchStatusMarkup({ ...row, dispatch_status: requestProgress.dispatch_state })
+      : "—";
+  const dispatchCell = `<td>${dispatchStatusMarkup}${deliveredSuffix}${missingAddressMarker}</td>`;
   const rowLabel = deliverySoNumbers(row).join(", ") || row.ref_no || row.sr;
   const canView = ["admin", "production", "dispatch", "salesperson"].includes(profile.role)
     || hasProductionAccess(profile) || hasDispatchAccess(profile) || isProductionStoreMode();
@@ -2381,13 +2428,31 @@ export function renderDeliveryRows(changedIds = null, statusChangedIds = new Set
     ? visibleRows.filter((row) => deliveryBrandingFilter === "all" || deliveryBrandingModes(row).includes(deliveryBrandingFilter))
     : visibleRows;
   const filtered = sortRows(brandingFilteredRows);
+  if (page === "deliveries.html") {
+    const filterSignature = JSON.stringify([
+      document.querySelector("#delivery-search").value,
+      document.querySelector("#delivery-date-from").value,
+      document.querySelector("#delivery-date-to").value,
+      document.querySelector("#delivery-salesperson").value,
+      document.querySelector("#delivery-production-filter").value,
+      document.querySelector("#delivery-dispatch-filter").value,
+      deliveryRoleStatusFilter,
+      deliveryUrgentFilter,
+      deliveryBrandingFilter
+    ]);
+    if (filterSignature !== deliveryListFilterSignature) {
+      deliveryVisibleLimit = 20;
+      deliveryListFilterSignature = filterSignature;
+    }
+  }
+  const renderedRows = page === "deliveries.html" ? filtered.slice(0, deliveryVisibleLimit) : filtered;
   if (changedIds === null) {
-    tbody.innerHTML = filtered.filter((row) => !deliveryExitingRows.has(row.id))
+    tbody.innerHTML = renderedRows.filter((row) => !deliveryExitingRows.has(row.id))
       .map(deliveryRowMarkup).join("");
     deliveryExitingRows.forEach((row) => tbody.append(row));
     bindDeliveryRowActions(tbody);
   } else {
-    const visibleById = new Map(filtered.map((row) => [row.id, row]));
+    const visibleById = new Map(renderedRows.map((row) => [row.id, row]));
     for (const id of changedIds) {
       const current = tbody.querySelector(`[data-entry-id="${CSS.escape(id)}"]`);
       const row = visibleById.get(id);
@@ -2407,8 +2472,8 @@ export function renderDeliveryRows(changedIds = null, statusChangedIds = new Set
       const replacement = template.firstElementChild;
       current?.remove();
       if (current && statusChangedIds.has(id)) replacement.classList.add("row-status-flash");
-      const index = filtered.findIndex((item) => item.id === id);
-      const next = filtered.slice(index + 1).map((item) =>
+      const index = renderedRows.findIndex((item) => item.id === id);
+      const next = renderedRows.slice(index + 1).map((item) =>
         tbody.querySelector(`[data-entry-id="${CSS.escape(item.id)}"]`)).find(Boolean);
       tbody.insertBefore(replacement, next || null);
       initializeScrollableTableRow(replacement);
@@ -2478,6 +2543,20 @@ export function renderDeliveryRows(changedIds = null, statusChangedIds = new Set
   emptyState.classList.toggle("hidden", filtered.length > 0);
   if (page === "deliveries.html") {
     document.querySelector("#delivery-results-count").textContent = `Showing ${filtered.length} deliveries`;
+    let showMore = document.querySelector("#delivery-show-more");
+    if (!showMore) {
+      showMore = document.createElement("button");
+      showMore.type = "button";
+      showMore.id = "delivery-show-more";
+      showMore.className = "secondary";
+      showMore.textContent = "Show more";
+      tbody.closest(".table-wrap").after(showMore);
+      showMore.addEventListener("click", () => {
+        deliveryVisibleLimit += 20;
+        renderDeliveryRows();
+      });
+    }
+    showMore.hidden = renderedRows.length >= filtered.length;
     const activeFilters = [];
     const dateFrom = document.querySelector("#delivery-date-from").value;
     const dateTo = document.querySelector("#delivery-date-to").value;
@@ -2507,163 +2586,180 @@ export function renderDeliveryRows(changedIds = null, statusChangedIds = new Set
   updateSortIndicators();
 }
 
-function renderDispatchDialog(row) {
+function renderDispatchPackDialog(row) {
   const content = document.querySelector("#dispatch-dialog-content");
-  const message = document.querySelector("#dispatch-dialog-message");
   const items = Array.isArray(row.items) ? row.items : [];
-  const trips = dispatchTripsByDelivery.get(row.id) || [];
-  const openTrips = trips.filter((trip) =>
-    !trip.voided_at && ["Packed", "Out for delivery"].includes(trip.status));
-  const tripOptions = openTrips.map((trip) =>
-    `<option value="${escapeHtml(trip.id)}"${dispatchDialogState.selectedTripId === trip.id ? " selected" : ""}>${escapeHtml(trip.vehicle)} · ${escapeHtml(trip.status)}</option>`
-  ).join("");
-  const newTripSelected = dispatchDialogState.selectedTripId === "new"
-    || !openTrips.some((trip) => trip.id === dispatchDialogState.selectedTripId);
-  if (newTripSelected) dispatchDialogState.selectedTripId = "new";
   const vehicleOptions = vehicleRows.map((vehicle) =>
     `<option value="${escapeHtml(vehicle.registration_number)}">${escapeHtml(vehicle.registration_number)} · ${escapeHtml(vehicle.description)}</option>`
   ).join("");
-  const lineMarkup = items.map((item) => {
+  content.innerHTML = `<div class="dispatch-pack-lines">${items.map((item) => {
     const progress = dispatchItemProgress(row.id, item.item_key);
-    const availableToReceive = progress?.available_to_receive ?? 0;
-    const availableToPack = progress?.available_to_pack ?? 0;
-    return `<section class="dispatch-dialog-line">
-      <h3>${escapeHtml(item.so_number || "—")} · ${escapeHtml(item.item_name || "Item")}</h3>
-      <p>Received ${escapeHtml(progress?.received ?? "—")}/${escapeHtml(progress?.job_card_total ?? "—")} · Packed ${escapeHtml(progress?.packed ?? "—")} · Delivered ${escapeHtml(progress?.delivered ?? "—")}</p>
-      <div class="dispatch-dialog-actions">
-        <label>Receive<input type="number" min="1" max="${escapeHtml(availableToReceive)}" value="${escapeHtml(availableToReceive)}" data-dispatch-receive-qty="${escapeHtml(item.item_key)}"></label>
-        <button type="button" class="secondary" data-dispatch-action="receive" data-item-key="${escapeHtml(item.item_key)}">Receive quantity</button>
-        <button type="button" class="quiet" data-dispatch-action="receive-all" data-item-key="${escapeHtml(item.item_key)}"${availableToReceive ? "" : " disabled"}>Receive all available</button>
-      </div>
-      <div class="dispatch-dialog-actions">
-        <label>Pack<input type="number" min="1" max="${escapeHtml(availableToPack)}" value="${escapeHtml(availableToPack)}" data-dispatch-pack-qty="${escapeHtml(item.item_key)}"></label>
-        <button type="button" class="secondary" data-dispatch-action="pack" data-item-key="${escapeHtml(item.item_key)}"${availableToPack ? "" : " disabled"}>Pack to trip</button>
-      </div>
-    </section>`;
-  }).join("");
-  const tripMarkup = trips.filter((trip) => !trip.voided_at).map((trip) => {
-    const tripItems = dispatchTripItemsByTripId.get(trip.id) || [];
-    const lineInputs = tripItems.map((tripItem) => {
-      const item = items.find((line) => line.item_key === tripItem.item_key);
-      return `<label>${escapeHtml(item?.item_name || "Item")} · Packed ${escapeHtml(tripItem.qty_packed)}
-        <input type="number" min="0" max="${escapeHtml(tripItem.qty_packed)}" value="${escapeHtml(tripItem.qty_packed)}" data-dispatch-delivery-qty data-item-key="${escapeHtml(tripItem.item_key)}">
-      </label>`;
-    }).join("");
-    const defaultAddress = tripItems.map((tripItem) =>
-      items.find((line) => line.item_key === tripItem.item_key)?.address).find((address) => String(address || "").trim()) || "";
-    const isOpen = ["Packed", "Out for delivery"].includes(trip.status);
-    return `<section class="dispatch-dialog-trip" data-dispatch-trip="${escapeHtml(trip.id)}">
-      <h3>${escapeHtml(trip.vehicle)} · ${escapeHtml(trip.status)}</h3>
-      ${tripItems.map((tripItem) => {
-        const item = items.find((line) => line.item_key === tripItem.item_key);
-        return `<p>${escapeHtml(item?.item_name || "Item")} · Packed ${escapeHtml(tripItem.qty_packed)} · Delivered ${escapeHtml(tripItem.qty_delivered)}</p>`;
-      }).join("")}
-      ${isOpen ? `<label>Delivery date<input type="date" value="${escapeHtml(today())}" data-dispatch-delivered-on required></label>
-        <label>Delivery address<input type="text" value="${escapeHtml(defaultAddress)}" data-dispatch-address required></label>
-        ${lineInputs}
-        <button type="button" class="primary" data-dispatch-action="deliver" data-trip-id="${escapeHtml(trip.id)}">Deliver trip</button>
-        <label>Failure reason<input type="text" data-dispatch-fail-reason="${escapeHtml(trip.id)}" required></label>
-        <button type="button" class="danger" data-dispatch-action="fail" data-trip-id="${escapeHtml(trip.id)}">Fail trip</button>` : ""}
-    </section>`;
-  }).join("");
-  content.innerHTML = `<section>
-    <h3>Receive and pack by item</h3>
-    ${lineMarkup || '<p class="muted">No item lines.</p>'}
-  </section>
-  <section>
-    <h3>Pack to trip</h3>
-    <label>Trip<select id="dispatch-trip-choice">
-      <option value="new"${newTripSelected ? " selected" : ""}>New trip</option>${tripOptions}
-    </select></label>
-    <div id="dispatch-new-trip-fields"${newTripSelected ? "" : " hidden"}>
-      <label>Vehicle<input type="text" list="dispatch-vehicle-options" value="${escapeHtml(dispatchDialogState.vehicle)}" data-dispatch-vehicle required></label>
-      <datalist id="dispatch-vehicle-options">${vehicleOptions}</datalist>
-      <label>Rider ID (optional)<input type="text" value="${escapeHtml(dispatchDialogState.riderId)}" data-dispatch-rider></label>
-      <label>Trip note (optional)<input type="text" value="${escapeHtml(dispatchDialogState.note)}" data-dispatch-note></label>
-    </div>
-  </section>
-  <section><h3>Trips</h3>${tripMarkup || '<p class="muted">No trips yet.</p>'}</section>
-  ${profile.role === "admin" ? '<section><h3>Close with balance</h3><label>Reason<input type="text" data-dispatch-close-reason required></label><button type="button" class="danger" data-dispatch-action="close">Close with balance</button></section>' : ""}`;
-  message.textContent = "";
-  document.querySelector("#dispatch-dialog-title").textContent = `Dispatch · ${row.ref_no || row.sr || row.client_name || "Delivery"}`;
-  const tripChoice = document.querySelector("#dispatch-trip-choice");
-  tripChoice.addEventListener("change", () => {
-    dispatchDialogState.selectedTripId = tripChoice.value;
-    document.querySelector("#dispatch-new-trip-fields").hidden = tripChoice.value !== "new";
-  });
-  content.querySelector("[data-dispatch-vehicle]")?.addEventListener("input", (event) => {
-    dispatchDialogState.vehicle = event.target.value;
-  });
-  content.querySelector("[data-dispatch-rider]")?.addEventListener("input", (event) => {
-    dispatchDialogState.riderId = event.target.value;
-  });
-  content.querySelector("[data-dispatch-note]")?.addEventListener("input", (event) => {
-    dispatchDialogState.note = event.target.value;
-  });
+    const released = progress?.released ?? 0;
+    const packed = progress?.packed ?? 0;
+    const available = released - packed;
+    return `<div class="dispatch-pack-line">
+      <label>How many packed?<input type="number" min="0" value="${available > 0 ? escapeHtml(available) : ""}" data-pack-qty="${escapeHtml(item.item_key)}"></label>
+    </div>`;
+  }).join("")}</div>
+  <label>Vehicle<select data-pack-vehicle required><option value="">Vehicle</option>${vehicleOptions}</select></label>
+  <div class="dialog-actions"><button type="button" class="quiet" data-dispatch-close>Cancel</button><button type="button" class="primary" data-dispatch-action="pack">Save</button></div>`;
+  document.querySelector("#dispatch-dialog-title").textContent = "Items packed";
+  document.querySelector("#dispatch-dialog-message").textContent = "";
 }
 
-function openDispatchDialog(row, trigger) {
-  dispatchDialogState = {
-    deliveryId: row.id,
-    selectedTripId: "new",
-    vehicle: "",
-    riderId: "",
-    note: "",
-    trigger
-  };
-  renderDispatchDialog(row);
+function renderDispatchDeliverDialog(row) {
+  const content = document.querySelector("#dispatch-dialog-content");
+  const items = Array.isArray(row.items) ? row.items : [];
+  const openTrips = (dispatchTripsByDelivery.get(row.id) || []).filter((trip) =>
+    !trip.voided_at && ["Packed", "Out for delivery"].includes(trip.status));
+  content.innerHTML = openTrips.map((trip) => {
+    const tripItems = dispatchTripItemsByTripId.get(trip.id) || [];
+    const address = tripItems.map((tripItem) =>
+      items.find((item) => item.item_key === tripItem.item_key)?.address)
+      .find((value) => String(value || "").trim()) || deliveryAddress(row) || "";
+    return `<section class="dispatch-deliver-trip" data-trip-id="${escapeHtml(trip.id)}">
+      <h3>${escapeHtml(trip.vehicle)}</h3>
+        ${items.filter((item) => tripItems.some((tripItem) => tripItem.item_key === item.item_key)).map((item) => {
+          const tripItem = tripItems.find((line) => line.item_key === item.item_key);
+          return `<label>How many delivered?<input type="number" min="0" value="${escapeHtml(tripItem.qty_packed)}" data-deliver-qty="${escapeHtml(tripItem.item_key)}"></label>`;
+      }).join("")}
+      <label>Delivery date<input type="date" value="${escapeHtml(new Date().toLocaleDateString("en-CA"))}" data-delivery-date required></label>
+        <label>Address<input type="text" value="${escapeHtml(address)}" data-delivery-address required></label>
+        <button type="button" class="primary" data-dispatch-action="deliver">Save</button>
+        <details><summary>Failed</summary><label>Reason<input type="text" data-failure-reason required></label><button type="button" class="quiet" data-dispatch-action="fail">Save</button></details>
+    </section>`;
+  }).join("") || '<p class="muted">No open trips.</p>';
+    document.querySelector("#dispatch-dialog-title").textContent = "Delivered";
+  document.querySelector("#dispatch-dialog-message").textContent = "";
+}
+
+function openDispatchDialog(row, mode, trigger) {
+  dispatchDialogState = { deliveryId: row.id, mode, trigger };
+  if (mode === "pack") renderDispatchPackDialog(row);
+  else renderDispatchDeliverDialog(row);
   const dialog = document.querySelector("#dispatch-dialog");
   if (!dialog.open) dialog.showModal();
 }
 
-async function runDispatchAction(button) {
+async function refreshDispatchRow(deliveryId) {
+  const { data, error } = await client.from(deliveryReadTable())
+    .select(deliverySelect).eq("id", deliveryId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Delivery request not found.");
+  replaceDeliveryRows([data], [deliveryId], false);
+  await loadDispatchProgress([deliveryId]);
+  renderDeliveryRows(new Set([deliveryId]));
+}
+
+function setDispatchDialogBusy(busy) {
+  document.querySelectorAll("#dispatch-dialog button").forEach((button) => {
+    button.disabled = busy;
+  });
+}
+
+async function saveDispatchPack() {
   const dialog = document.querySelector("#dispatch-dialog");
   const deliveryId = dispatchDialogState.deliveryId;
   const row = deliveryRows.find((delivery) => delivery.id === deliveryId);
-  if (!row) return;
-  const action = button.dataset.dispatchAction;
-  const itemKey = button.dataset.itemKey;
-  const tripId = button.dataset.tripId;
+  const vehicle = dialog.querySelector("[data-pack-vehicle]").value;
+  const lines = [...dialog.querySelectorAll("[data-pack-qty]")].map((input) => ({
+    input,
+    item: row.items.find((line) => line.item_key === input.dataset.packQty),
+    qty: Number(input.value)
+  }));
+  const message = dialog.querySelector("#dispatch-dialog-message");
+  if (!vehicle) {
+    message.textContent = "Choose a vehicle.";
+    return;
+  }
+  if (lines.some((line) => !Number.isInteger(line.qty) || line.qty < 0)) {
+    message.textContent = "Packed quantities must be whole numbers greater than or equal to zero.";
+    return;
+  }
+  const overReleased = lines.find((line) => {
+    const progress = dispatchItemProgress(deliveryId, line.item.item_key);
+    return line.qty > (progress?.released ?? 0) - (progress?.packed ?? 0);
+  });
+  if (overReleased) {
+    const progress = dispatchItemProgress(deliveryId, overReleased.item.item_key);
+    message.textContent = `Only ${(progress?.released ?? 0) - (progress?.packed ?? 0)} released so far`;
+    return;
+  }
+  const linesToPack = lines.filter((line) => line.qty > 0);
+  if (!linesToPack.length) {
+    message.textContent = "Enter a quantity to pack.";
+    return;
+  }
+  setDispatchDialogBusy(true);
+  message.textContent = "";
+  let tripId = null;
+  let currentLine = null;
+  let receiptRecorded = false;
+  const packedNames = [];
+  try {
+    for (const line of linesToPack) {
+      currentLine = line;
+      receiptRecorded = false;
+      const progress = dispatchItemProgress(deliveryId, line.item.item_key);
+      const receiptQty = Math.max(0, line.qty - (progress?.available_to_pack ?? 0));
+      if (receiptQty > 0) {
+        const receipt = await client.rpc("receive_item", {
+          p_delivery_id: deliveryId,
+          p_item_key: line.item.item_key,
+          p_qty: receiptQty
+        });
+        if (receipt.error) throw receipt.error;
+        receiptRecorded = true;
+        await refreshDispatchRow(deliveryId);
+      }
+      const packed = await client.rpc("pack_to_trip", {
+        p_delivery_id: deliveryId,
+        p_item_key: line.item.item_key,
+        p_qty: line.qty,
+        p_trip_id: tripId,
+        p_vehicle: tripId ? null : vehicle,
+        p_rider_id: null
+      });
+      if (packed.error) throw packed.error;
+      if (!tripId) {
+        vehicleRows.sort((left, right) => {
+          if (left.registration_number === vehicle) return -1;
+          if (right.registration_number === vehicle) return 1;
+          return left.registration_number.localeCompare(right.registration_number);
+        });
+      }
+      tripId ||= packed.data;
+      packedNames.push(line.item.item_name || "Item");
+      line.input.value = "0";
+      await refreshDispatchRow(deliveryId);
+    }
+    dialog.close();
+  } catch (error) {
+    const completed = packedNames.length ? `Packed: ${packedNames.join(", ")}. ` : "";
+    const receipt = receiptRecorded ? `A receipt was recorded for ${currentLine.item.item_name || "Item"}. ` : "";
+    message.textContent = `${completed}${receipt}Stopped at ${currentLine?.item?.item_name || "item"}: ${error.message || "The request failed."}`;
+    setDispatchDialogBusy(false);
+  }
+}
+
+async function runDispatchDeliverAction(button) {
+  const dialog = document.querySelector("#dispatch-dialog");
+  const trip = button.closest("[data-trip-id]");
+  const tripId = trip.dataset.tripId;
+  const deliveryId = dispatchDialogState.deliveryId;
+  const message = dialog.querySelector("#dispatch-dialog-message");
   let rpcName;
   let args;
-  if (action === "receive" || action === "receive-all") {
-    const input = dialog.querySelector(`[data-dispatch-receive-qty="${CSS.escape(itemKey)}"]`);
-    rpcName = "receive_item";
-    args = {
-      p_delivery_id: deliveryId,
-      p_item_key: itemKey,
-      p_qty: action === "receive-all" ? null : Number(input.value),
-      p_note: null
-    };
-  } else if (action === "pack") {
-    const input = dialog.querySelector(`[data-dispatch-pack-qty="${CSS.escape(itemKey)}"]`);
-    const useNewTrip = dispatchDialogState.selectedTripId === "new";
-    const vehicle = dialog.querySelector("[data-dispatch-vehicle]")?.value.trim() || "";
-    if (useNewTrip && !vehicle) {
-      dialog.querySelector("#dispatch-dialog-message").textContent = "A vehicle is required for a new trip.";
-      return;
-    }
-    rpcName = "pack_to_trip";
-    args = {
-      p_delivery_id: deliveryId,
-      p_item_key: itemKey,
-      p_qty: Number(input.value),
-      p_trip_id: useNewTrip ? null : dispatchDialogState.selectedTripId,
-      p_vehicle: useNewTrip ? vehicle : null,
-      p_rider_id: useNewTrip ? dialog.querySelector("[data-dispatch-rider]")?.value.trim() || null : null,
-      p_note: useNewTrip ? dialog.querySelector("[data-dispatch-note]")?.value.trim() || null : null
-    };
-  } else if (action === "deliver") {
-    const trip = button.closest("[data-dispatch-trip]");
-    const date = trip.querySelector("[data-dispatch-delivered-on]").value;
-    const address = trip.querySelector("[data-dispatch-address]").value.trim();
+  if (button.dataset.dispatchAction === "deliver") {
+    const date = trip.querySelector("[data-delivery-date]").value;
+    const address = trip.querySelector("[data-delivery-address]").value.trim();
     if (!date || !address) {
-      dialog.querySelector("#dispatch-dialog-message").textContent = "A delivery date and address are required.";
+      message.textContent = "A delivery date and item address are required.";
       return;
     }
     const quantities = {};
-    trip.querySelectorAll("[data-dispatch-delivery-qty]").forEach((input) => {
-      quantities[input.dataset.itemKey] = Number(input.value);
+    trip.querySelectorAll("[data-deliver-qty]").forEach((input) => {
+      quantities[input.dataset.deliverQty] = Number(input.value);
     });
     rpcName = "deliver_trip";
     args = {
@@ -2672,58 +2768,44 @@ async function runDispatchAction(button) {
       p_delivery_address: address,
       p_qty_per_item: quantities
     };
-  } else if (action === "fail") {
-    const reason = dialog.querySelector(`[data-dispatch-fail-reason="${CSS.escape(tripId)}"]`).value.trim();
+  } else {
+    const reason = trip.querySelector("[data-failure-reason]").value.trim();
     if (!reason) {
-      dialog.querySelector("#dispatch-dialog-message").textContent = "A failure reason is required.";
+      message.textContent = "A failure reason is required.";
       return;
     }
     rpcName = "fail_trip";
     args = { p_trip_id: tripId, p_reason: reason };
-  } else if (action === "close") {
-    const reason = dialog.querySelector("[data-dispatch-close-reason]").value.trim();
-    if (!reason) {
-      dialog.querySelector("#dispatch-dialog-message").textContent = "A close-with-balance reason is required.";
-      return;
-    }
-    rpcName = "close_with_balance";
-    args = { p_delivery_id: deliveryId, p_reason: reason };
-  } else {
-    return;
   }
-  const buttons = [...dialog.querySelectorAll("button")];
-  buttons.forEach((current) => { current.disabled = true; });
-  dialog.querySelector("#dispatch-dialog-message").textContent = "";
-  let actionCompleted = false;
+  setDispatchDialogBusy(true);
+  message.textContent = "";
   try {
-    const { data, error } = await client.rpc(rpcName, args);
+    const { error } = await client.rpc(rpcName, args);
     if (error) throw error;
-    actionCompleted = true;
-    if (rpcName === "pack_to_trip" && dispatchDialogState.selectedTripId === "new") {
-      dispatchDialogState.selectedTripId = data;
-    }
-    await loadDispatchProgress([deliveryId]);
-    renderDeliveryRows(new Set([deliveryId]));
-    const refreshedRow = deliveryRows.find((delivery) => delivery.id === deliveryId);
-    if (refreshedRow) renderDispatchDialog(refreshedRow);
-    buttons.forEach((current) => { current.disabled = false; });
+    await refreshDispatchRow(deliveryId);
+    dialog.close();
   } catch (error) {
-    dialog.querySelector("#dispatch-dialog-message").textContent = actionCompleted
-      ? `Action completed, but progress could not be refreshed: ${error.message || "Please reload the page."}`
-      : error.message || "The dispatch action could not be completed.";
-    buttons.forEach((current) => {
-      current.disabled = actionCompleted && !current.matches("[data-dispatch-close]");
-    });
+    message.textContent = error.message || "The dispatch action could not be completed.";
+    setDispatchDialogBusy(false);
   }
 }
 
 function bindDispatchDialog() {
   const dialog = document.querySelector("#dispatch-dialog");
-  dialog.querySelector("[data-dispatch-close]").addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) dialog.close();
+    if (event.target === dialog) {
+      dialog.close();
+      return;
+    }
+    const closeButton = event.target.closest("[data-dispatch-close]");
+    if (closeButton) {
+      dialog.close();
+      return;
+    }
     const button = event.target.closest("[data-dispatch-action]");
-    if (button) void runDispatchAction(button);
+    if (!button) return;
+    if (button.dataset.dispatchAction === "pack") void saveDispatchPack();
+    else void runDispatchDeliverAction(button);
   });
   dialog.addEventListener("close", () => {
     if (dispatchDialogState.trigger?.isConnected) dispatchDialogState.trigger.focus();
@@ -2732,11 +2814,6 @@ function bindDispatchDialog() {
 }
 
 function bindDeliveryRowActions(root) {
-  root.querySelectorAll("[data-delivery-ready]").forEach((button) => button.addEventListener("click", () =>
-    updateDelivery(button.dataset.deliveryReady, {
-      production_status: "Ready",
-      ...(profile.role === "admin" ? { ready_at: new Date().toISOString() } : {})
-    }, button, "Delivery marked Ready.")));
   root.querySelectorAll("[data-delivery-view]").forEach((button) => button.addEventListener("click", () => {
     const row = deliveryRows.find((item) => item.id === button.dataset.deliveryView);
     if (row) void openDeliveryView(row, button);
@@ -2767,9 +2844,13 @@ function bindDeliveryRowActions(root) {
   root.querySelectorAll("[data-delivery-delete]").forEach((button) => button.addEventListener("click", () => {
     void deleteDelivery(button);
   }));
-  root.querySelectorAll("[data-dispatch-open]").forEach((button) => button.addEventListener("click", () => {
-    const row = deliveryRows.find((item) => item.id === button.dataset.dispatchOpen);
-    if (row) openDispatchDialog(row, button);
+  root.querySelectorAll("[data-dispatch-pack]").forEach((button) => button.addEventListener("click", () => {
+    const row = deliveryRows.find((item) => item.id === button.dataset.dispatchPack);
+    if (row) openDispatchDialog(row, "pack", button);
+  }));
+  root.querySelectorAll("[data-dispatch-deliver]").forEach((button) => button.addEventListener("click", () => {
+    const row = deliveryRows.find((item) => item.id === button.dataset.dispatchDeliver);
+    if (row) openDispatchDialog(row, "deliver", button);
   }));
   root.querySelectorAll("[data-release-history]").forEach((button) => button.addEventListener("click", () => {
     void openReleaseHistory(button.dataset.releaseHistory, button).catch((error) =>
@@ -2788,24 +2869,6 @@ function bindDeliveryRowActions(root) {
       }
     });
   });
-  root.querySelectorAll("[data-transport]").forEach((select) => select.addEventListener("change", async () => {
-    const vehicle = root.querySelector(`[data-vehicle="${CSS.escape(select.dataset.transport)}"]`);
-    vehicle?.classList.toggle("hidden", select.value !== "Company");
-    if (vehicle && select.value !== "Company") vehicle.value = "";
-    select.disabled = true;
-    await updateDelivery(select.dataset.transport, {
-      transport: select.value || null,
-      vehicle_id: select.value === "Company" ? vehicle?.value || null : null
-    }, null, "Transport saved.");
-    if (select.isConnected) select.disabled = false;
-  }));
-  root.querySelectorAll("[data-vehicle]").forEach((select) => select.addEventListener("change", async () => {
-    select.disabled = true;
-    await updateDelivery(select.dataset.vehicle, {
-      vehicle_id: select.value || null
-    }, null, "Vehicle saved.");
-    if (select.isConnected) select.disabled = false;
-  }));
 }
 
 async function deleteDelivery(button) {
