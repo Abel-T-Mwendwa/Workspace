@@ -31,11 +31,13 @@ let riderQueryToken = 0;
 let riderUsers = [];
 let requesterNames = new Map();
 let routeRiderTotalCount = 0;
+let routePillCountRows = [];
 let routeActivityTileFilter = null;
 let routeActivityRows = [];
 const ROUTE_RIDER_FILTERS_KEY = "routeRiderFilters";
 let activeRiderJobCount = 0;
 const RIDER_PAGE_SIZE = 20;
+let routeScrollSyncing = false;
 
 export function setRouteActivityRows(rows) {
   routeActivityRows = rows;
@@ -134,27 +136,8 @@ async function loadRiderUsers() {
   riderUsers = data || [];
 }
 
-function routeRiderDateRange(period, currentDate = dateKey(new Date())) {
-  if (period === "all") return null;
-  const date = new Date(`${currentDate}T00:00:00Z`);
-  const start = new Date(date);
-  const end = new Date(date);
-  if (period === "week") {
-    start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
-    end.setTime(start.getTime());
-    end.setUTCDate(end.getUTCDate() + 6);
-  } else if (period === "month") {
-    start.setUTCDate(1);
-    end.setUTCMonth(end.getUTCMonth() + 1, 0);
-  }
-  const format = (value) => value.toISOString().slice(0, 10);
-  return { from: format(start), to: format(end) };
-}
-
 function routeRiderFilterValues() {
   return {
-    period: document.querySelector("#route-request-period").value,
-    salesperson: document.querySelector("#route-salesperson-filter-select").value,
     rider: routeRiderChipFilter,
     status: routeStatusChipFilter
   };
@@ -178,12 +161,6 @@ function restoreRouteRiderFilters() {
     return;
   }
   if (!saved || typeof saved !== "object") return;
-  if (["today", "week", "month", "all"].includes(saved.period)) {
-    document.querySelector("#route-request-period").value = saved.period;
-  }
-  if (typeof saved.salesperson === "string") {
-    document.querySelector("#route-salesperson-filter-select").dataset.savedValue = saved.salesperson;
-  }
   if (typeof saved.rider === "string") routeRiderChipFilter = saved.rider;
   if (ROUTE_STATUS_CHIPS.some(({ value }) => value === saved.status)) {
     routeStatusChipFilter = saved.status;
@@ -192,64 +169,39 @@ function restoreRouteRiderFilters() {
   }
 }
 
-async function loadRouteSalespersonOptions() {
-  const ids = new Set();
+function applyRouteSearch(query, search) {
+  if (!search) return query;
+  const term = JSON.stringify(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
+  return query.or(`ref_no.ilike.${term},client_name.ilike.${term}`);
+}
+
+async function loadRoutePillCountRows(search) {
   let offset = 0;
+  const rows = [];
   while (true) {
-    const { data, error } = await client.from("rider_jobs").select("created_by")
-      .order("created_at").range(offset, offset + 999);
+    let query = client.from("rider_jobs")
+      .select("id,assigned_rider,status,scheduled_date,ref_no,client_name")
+      .neq("status", "Deleted")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+    query = applyRouteSearch(query, search);
+    const { data, error } = await query.range(offset, offset + 999);
     if (error) throw error;
-    (data || []).forEach((row) => {
-      if (row.created_by) ids.add(row.created_by);
-    });
+    rows.push(...(data || []));
     if ((data || []).length < 1000) break;
     offset += 1000;
   }
-  const select = document.querySelector("#route-salesperson-filter-select");
-  if (!ids.size) return;
-  const { data, error } = await client.from("profiles").select("id,full_name")
-    .eq("active", true).in("id", [...ids]).order("full_name");
-  if (error) throw error;
-  const people = data || [];
-  people.forEach((person) => requesterNames.set(person.id, person.full_name));
-  select.innerHTML = '<option value="">All salespeople</option>' + people.map((person) =>
-    `<option value="${escapeHtml(person.id)}">${escapeHtml(person.full_name)}</option>`
-  ).join("");
-  const savedValue = select.dataset.savedValue;
-  if (savedValue && people.some((person) => person.id === savedValue)) select.value = savedValue;
+  routePillCountRows = rows;
 }
 
 async function initializeRouteRiderFilters() {
   restoreRouteRiderFilters();
-  routeRiderChipFilter = "__unassigned";
-  routeStatusChipFilter = "active";
-  await loadRouteSalespersonOptions();
-  [
-    "#route-request-period",
-    "#route-salesperson-filter-select"
-  ].forEach((selector) => {
-    document.querySelector(selector).addEventListener("change", () => {
-      saveRouteRiderFilters();
-      void loadRiderJobs(true);
-    });
-  });
-  document.querySelector("#route-clear-filters").addEventListener("click", () => {
-    document.querySelector("#route-request-period").value = "all";
-    document.querySelector("#route-salesperson-filter-select").value = "";
-    routeRiderChipFilter = "";
-    routeStatusChipFilter = "";
-    saveRouteRiderFilters();
+  const activeRiderIds = new Set(riderUsers.filter((rider) => rider.active).map((rider) => rider.id));
+  if (routeRiderChipFilter !== "__unassigned" && routeRiderChipFilter !== ""
+    && !activeRiderIds.has(routeRiderChipFilter)) routeRiderChipFilter = "__unassigned";
+  document.querySelector("#route-search").addEventListener("input", debounce(() => {
     void loadRiderJobs(true);
-  });
-  document.querySelector("#route-reset-filters").addEventListener("click", () => {
-    document.querySelector("#route-search").value = "";
-    document.querySelector("#route-request-period").value = "today";
-    document.querySelector("#route-salesperson-filter-select").value = "";
-    routeRiderChipFilter = "__unassigned";
-    routeStatusChipFilter = "active";
-    saveRouteRiderFilters();
-    void loadRiderJobs(true);
-  });
+  }));
   saveRouteRiderFilters();
 }
 
@@ -275,11 +227,19 @@ async function loadRiderJobs(reset = true) {
   const routeFilters = routeAdmin ? routeRiderFilterValues() : null;
   let base = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at", routeAdmin || myJobs ? { count: "exact" } : undefined);
   if (routeAdmin) {
-    const dateRange = routeRiderDateRange(routeFilters.period);
-    if (dateRange) base = base.gte("scheduled_date", dateRange.from).lte("scheduled_date", dateRange.to);
-    if (routeFilters.salesperson) base = base.eq("created_by", routeFilters.salesperson);
+    base = base.neq("status", "Deleted");
+    if (routeFilters.rider === "__unassigned") base = base.is("assigned_rider", null);
+    else {
+      base = base.eq("scheduled_date", dateKey(new Date()));
+      if (routeFilters.rider) base = base.eq("assigned_rider", routeFilters.rider);
+    }
+    const statuses = routeFilters.status === "active"
+      ? ["Not started", "Started", "In progress"]
+      : routeFilters.status === "In progress" ? ["Started", "In progress"]
+        : routeFilters.status ? [routeFilters.status] : null;
+    if (statuses) base = base.in("status", statuses);
   }
-  if (profile.role === "rider" && !routeAdmin) base = base.eq("assigned_rider", profile.id);
+  if (profile.role === "rider" && !routeAdmin) base = base.eq("assigned_rider", profile.id).neq("status", "Deleted");
   else if (!routeAdmin) base = base.eq("created_by", profile.id);
   if (myJobs) {
     const filter = document.querySelector("#my-jobs-filter").value;
@@ -287,10 +247,9 @@ async function loadRiderJobs(reset = true) {
     else if (filter === "finished") base = base.eq("status", "Finished");
   }
   try {
-    if (routeAdmin && search) {
-      const term = JSON.stringify(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
-      base = base.or(`ref_no.ilike.${term},client_name.ilike.${term}`);
-    } else if (!routeAdmin && search) base = base.ilike("client_name", `%${search}%`);
+    if (routeAdmin && reset) await loadRoutePillCountRows(search);
+    if (routeAdmin) base = applyRouteSearch(base, search);
+    else if (search) base = base.ilike("client_name", `%${search}%`);
     if (myJobs) console.log("[TEMP-DEBUG] query start", { riderId: profile.id, reset, offset: riderOffset }); // TEMP-DEBUG
     let orderedQuery = base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin });
     if (myJobs) orderedQuery = orderedQuery.order("id", { ascending: true });
@@ -357,23 +316,28 @@ function riderAssignmentControls(row) {
     <button type="button" class="primary" data-rider-assign="${escapeHtml(row.id)}">Assign</button></div>`;
 }
 
-function renderRouteRiderChips(rows) {
+function renderRouteRiderChips() {
+  const today = dateKey(new Date());
   const chips = [
     { value: "__unassigned", label: "Pending", style: "pending" },
-    ...riderUsers.map((rider) => ({ value: rider.id, label: rider.full_name, style: "ready" })),
-    { value: "", label: "All", style: "all" }
+    { value: "", label: "All", style: "all" },
+    ...riderUsers.filter((rider) => rider.active).map((rider) =>
+      ({ value: rider.id, label: rider.full_name, style: "ready" }))
   ];
-  const counts = new Map(chips.map(({ value }) => [
-    value,
-    value === "" ? rows.length
-      : value === "__unassigned" ? rows.filter((row) => !row.assigned_rider).length
-        : rows.filter((row) => row.assigned_rider === value).length
-  ]));
+  const counts = new Map(chips.map(({ value }) => {
+    const count = routePillCountRows.filter((row) => routeStatusFilterMatches(row, routeStatusChipFilter)
+      && (value === "__unassigned" ? !row.assigned_rider
+        : value === "" ? row.scheduled_date === today
+          : row.assigned_rider === value && row.scheduled_date === today)).length;
+    return [value, count];
+  }));
+  if (routeRiderChipFilter !== "__unassigned" && routeRiderChipFilter !== ""
+    && !chips.some(({ value }) => value === routeRiderChipFilter)) routeRiderChipFilter = "__unassigned";
   renderStatusChipButtons(document.querySelector("#route-rider-chips"), chips, counts,
     routeRiderChipFilter, (value) => {
       routeRiderChipFilter = value;
       saveRouteRiderFilters();
-      renderRiderJobs();
+      void loadRiderJobs(true);
     }, "riderFilter");
 }
 
@@ -385,29 +349,67 @@ function routeStatusFilterMatches(row, value) {
 }
 
 function renderRouteActivityRows(rows) {
-  return rows.map((row) => {
+  const multiDay = document.querySelector("#route-period").value !== "day";
+  const timeMinutes = (row) => {
+    if (!row.rider_time) return null;
+    const [hours, minutes] = row.rider_time.split(":").map(Number);
+    return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : null;
+  };
+  const riderName = (row) => row.assigned_rider
+    ? riderUsers.find((user) => user.id === row.assigned_rider)?.full_name || "Assigned rider"
+    : "Not assigned";
+  const orderedRows = [...rows].sort((a, b) => {
+    const aMinutes = timeMinutes(a);
+    const bMinutes = timeMinutes(b);
+    if (aMinutes === null || bMinutes === null) {
+      if (aMinutes !== bMinutes) return aMinutes === null ? 1 : -1;
+      return String(a.created_at || "").localeCompare(String(b.created_at || ""))
+        || String(a.id || "").localeCompare(String(b.id || ""));
+    }
+    if (multiDay) {
+      const dateOrder = String(a.scheduled_date || "").localeCompare(String(b.scheduled_date || ""));
+      if (dateOrder) return dateOrder;
+    }
+    return aMinutes - bMinutes
+      || riderName(a).localeCompare(riderName(b))
+      || String(a.client_name || "").localeCompare(String(b.client_name || ""))
+      || String(a.id || "").localeCompare(String(b.id || ""));
+  });
+  return orderedRows.map((row) => {
     const salesperson = requesterNames.get(row.created_by) || "Salesperson";
-    const rider = row.assigned_rider
-      ? riderUsers.find((user) => user.id === row.assigned_rider)?.full_name || "Assigned rider"
-      : "Not assigned";
-    return `<tr><td>${escapeHtml(salesperson)}</td><td>${escapeHtml(row.client_name || "—")}<br><small>${escapeHtml(row.contact_name || "—")} · ${escapeHtml(row.contact_number || "—")}</small></td><td>${escapeHtml(row.address || "—")}<br><small>${escapeHtml(row.details || "")}</small></td><td>${escapeHtml(rider)}</td><td>${escapeHtml(riderSlotText(row))}</td><td>${escapeHtml(row.status)}</td></tr>`;
+    const riderTime = `${escapeHtml(riderSlotText(row))}${multiDay && row.scheduled_date
+      ? `<br><small>${escapeHtml(row.scheduled_date)}</small>` : ""}`;
+    return `<tr><td>${riderTime}</td><td>${escapeHtml(salesperson)}</td><td>${escapeHtml(row.client_name || "—")}<br><small>${escapeHtml(row.contact_name || "—")} · ${escapeHtml(row.contact_number || "—")}</small></td><td>${escapeHtml(row.address || "—")}<br><small>${escapeHtml(row.details || "")}</small></td><td>${escapeHtml(riderName(row))}</td><td>${escapeHtml(row.status)}</td></tr>`;
   }).join("");
 }
 
-function renderRouteStatusChips(rows) {
-  const counts = new Map(ROUTE_STATUS_CHIPS.map(({ value }) => [
-    value,
-    value ? rows.filter((row) => routeStatusFilterMatches(row, value)).length : rows.length
+function renderRouteStatusChips() {
+  const today = dateKey(new Date());
+  const counts = new Map(ROUTE_STATUS_CHIPS.map(({ value }) => [value,
+    routePillCountRows.filter((row) => {
+      const riderMatches = routeRiderChipFilter === "__unassigned"
+        ? !row.assigned_rider
+        : routeRiderChipFilter === "" ? row.scheduled_date === today
+          : row.assigned_rider === routeRiderChipFilter && row.scheduled_date === today;
+      return riderMatches && routeStatusFilterMatches(row, value);
+    }).length
   ]));
   renderStatusChipButtons(document.querySelector("#route-status-chips"), ROUTE_STATUS_CHIPS, counts,
     routeStatusChipFilter, (value) => {
       routeStatusChipFilter = value;
       saveRouteRiderFilters();
-      renderRiderJobs();
+      void loadRiderJobs(true);
     }, "statusChip");
 }
 
+const routeRowsAnimating = new Set();
+let routeRenderQueued = false;
+
 function renderRiderJobs() {
+    if (page === "route-admin.html" && routeRowsAnimating.size) {
+      routeRenderQueued = true;
+      return;
+    }
   const routeView = hasRouteAdminAccess(profile) && page === "route-admin.html";
   const showSalesView = hasRiderRequestAccess(profile) && page === "riders.html";
   const assignmentValues = new Map([...(document.querySelector("#route-rider-rows")?.querySelectorAll("[data-rider-choice]") || [])]
@@ -434,10 +436,12 @@ function renderRiderJobs() {
       || (routeRiderChipFilter === "__unassigned" ? !row.assigned_rider : row.assigned_rider === routeRiderChipFilter))
     : riderRows;
   if (routeView) {
-    renderRouteRiderChips(statusRows);
-    renderRouteStatusChips(riderRows);
+    renderRouteRiderChips();
+    renderRouteStatusChips();
   }
-  const markup = (rows, canAssign) => rows.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}"><td><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>
+  const markup = (rows, canAssign) => rows.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}">${canAssign
+    ? `<td class="col-sr-ref"><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>`
+    : `<td><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>`}
     ${canAssign ? `<td>${escapeHtml(requesterNames.get(row.created_by) || "Salesperson")}</td>` : ""}
     <td>${escapeHtml(row.client_name)}<br><small>${escapeHtml(row.contact_name)} · ${escapeHtml(row.contact_number)}</small></td>
     <td>${escapeHtml(row.address)}<br><small>${escapeHtml(row.details)}</small></td><td>${escapeHtml(row.job_type)}</td>
@@ -445,11 +449,16 @@ function renderRiderJobs() {
     ${canAssign ? `<td>${escapeHtml(localDateTime(row.created_at))}</td>` : ""}
     <td>${canAssign ? riderAssignmentControls(row) : escapeHtml(row.assigned_rider ? riderUsers.find((user) => user.id === row.assigned_rider)?.full_name || "Assigned rider" : "Not assigned yet")}</td><td>${escapeHtml(riderSlotText(row))}</td>
     <td>${escapeHtml(row.status)}${row.decline_reason ? `<br><small>${escapeHtml(localDateTime(row.declined_at))} · ${escapeHtml(row.decline_reason)}</small>` : ""}${row.started_at ? `<br><small>Started ${escapeHtml(localDateTime(row.started_at))}</small>` : ""}${row.finished_at ? `<br><small>Finished ${escapeHtml(localDateTime(row.finished_at))}</small>` : ""}</td>
-    ${canAssign ? `<td>${row.status === "Not started" ? `<button type="button" class="danger" data-rider-decline="${escapeHtml(row.id)}">Decline</button>` : "—"}</td>` : ""}</tr>`).join("");
+    ${canAssign ? `<td>${!row.assigned_rider && row.status === "Not started"
+      ? `<button type="button" class="danger" data-rider-decline="${escapeHtml(row.id)}">Decline</button>`
+      : row.assigned_rider && row.status !== "Deleted"
+        ? `<button type="button" class="danger" data-rider-delete="${escapeHtml(row.id)}"${row.started_at || ["In progress", "Finished"].includes(row.status) ? ' disabled title="Rider has already started this entry"' : ""}>Delete</button>`
+        : "—"}</td>` : ""}</tr>`).join("");
   if (routeView) {
     const routeRows = document.querySelector("#route-rider-rows");
     routeRows.innerHTML = markup(matchingRows, true);
     initializeScrollableTables(routeRows.closest("table"));
+    refreshRouteStickyScrollbar();
     assignmentValues.forEach((values, id) => {
       const rider = routeRows.querySelector(`[data-rider-choice="${CSS.escape(id)}"]`);
       const slot = routeRows.querySelector(`[data-rider-slot="${CSS.escape(id)}"]`);
@@ -511,12 +520,6 @@ function renderRiderJobs() {
       : `Showing ${matchingRows.length} ${requestCount}`;
     const filters = routeRiderFilterValues();
     const active = [];
-    if (filters.period !== "all") {
-      active.push(`Period: ${document.querySelector("#route-request-period").selectedOptions[0].textContent}`);
-    }
-    if (filters.salesperson) {
-      active.push(`Salesperson: ${document.querySelector("#route-salesperson-filter-select").selectedOptions[0].textContent}`);
-    }
     if (filters.rider) {
       active.push(`Rider: ${filters.rider === "__unassigned"
         ? "Pending"
@@ -544,6 +547,7 @@ function renderRiderJobs() {
   roots.forEach((root) => {
     root.querySelectorAll("[data-rider-assign]").forEach((button) => button.addEventListener("click", async () => {
       const id = button.dataset.riderAssign;
+      if (routeRowsAnimating.has(id)) return;
       const riderId = root.querySelector(`[data-rider-choice="${CSS.escape(id)}"]`).value;
       const slotSelect = root.querySelector(`[data-rider-slot="${CSS.escape(id)}"]`);
       const slot = slotSelect.value;
@@ -552,12 +556,26 @@ function renderRiderJobs() {
         toast("Choose a rider and hourly slot before assigning.", "error");
         return;
       }
-      await updateRiderJob(id, {
+      const row = button.closest("tr");
+      routeRowsAnimating.add(id);
+      const updated = await updateRiderJob(id, {
         assigned_rider: riderId, rider_time: slot, rider_time_end: end, status: "Started",
         ...(profile.role === "admin" ? { assigned_at: new Date().toISOString() } : {})
-      }, button, routeView && routeRiderChipFilter === "__unassigned"
-        ? "Rider assigned; removed from the unassigned list."
-        : "Rider assigned.");
+      }, button);
+      if (!updated) {
+        finishRouteRowAction(id);
+        return;
+      }
+      updateRouteJobCache(updated);
+      try {
+        await animateRouteAction(row, "assign", routeRowMatchesActiveFilters(updated));
+        toast(routeView && routeRiderChipFilter === "__unassigned"
+          ? "Rider assigned; removed from the unassigned list."
+          : "Rider assigned.");
+        await loadRiderJobs(true);
+      } finally {
+        finishRouteRowAction(id);
+      }
     }));
     root.querySelectorAll("[data-rider-decline]").forEach((button) => button.addEventListener("click", async () => {
       const reason = window.prompt("Why is this rider request being declined?");
@@ -566,27 +584,173 @@ function renderRiderJobs() {
         toast("Enter a reason before declining the request.", "error");
         return;
       }
-      await updateRiderJob(button.dataset.riderDecline, {
+      const id = button.dataset.riderDecline;
+      if (routeRowsAnimating.has(id)) return;
+      const row = button.closest("tr");
+      routeRowsAnimating.add(id);
+      const updated = await updateRiderJob(id, {
         status: "Declined", decline_reason: reason.trim(),
         ...(profile.role === "admin" ? { declined_at: new Date().toISOString() } : {})
-      }, button, "Rider request declined.");
+      }, button);
+      if (!updated) {
+        finishRouteRowAction(id);
+        return;
+      }
+      updateRouteJobCache(updated);
+      try {
+        await animateRouteAction(row, "remove", routeRowMatchesActiveFilters(updated));
+        toast("Rider request declined.");
+        await loadRiderJobs(true);
+      } finally {
+        finishRouteRowAction(id);
+      }
+    }));
+    root.querySelectorAll("[data-rider-delete]").forEach((button) => button.addEventListener("click", async () => {
+      if (button.disabled) return;
+      const id = button.dataset.riderDelete;
+      if (routeRowsAnimating.has(id)) return;
+      const row = button.closest("tr");
+      routeRowsAnimating.add(id);
+      setBusy(button, true);
+      let refresh = false;
+      try {
+        const { data, error } = await client.rpc("route_admin_delete_rider_job", { p_job_id: id });
+        if (error) throw error;
+        const updated = Array.isArray(data) ? data[0] : data;
+        if (!updated) {
+          toast("Rider has already started this entry", "error");
+        } else {
+          updateRouteJobCache(updated);
+          await animateRouteAction(row, "remove", routeRowMatchesActiveFilters(updated));
+          toast("Rider request deleted.");
+        }
+        refresh = true;
+      } catch (error) {
+        toast(error.message || "Could not delete rider request.", "error");
+        refresh = true;
+      } finally {
+        if (refresh) await loadRiderJobs(true);
+        finishRouteRowAction(id);
+        setBusy(button, false);
+      }
     }));
   });
 }
 
-async function updateRiderJob(id, values, button, success) {
+function finishRouteRowAction(id) {
+  routeRowsAnimating.delete(id);
+  if (!routeRowsAnimating.size && routeRenderQueued) {
+    routeRenderQueued = false;
+    renderRiderJobs();
+  }
+}
+
+function updateRouteJobCache(updated) {
+  if (updated.status === "Deleted") {
+    riderJobRows = riderJobRows.filter((row) => row.id !== updated.id);
+    return;
+  }
+  const index = riderJobRows.findIndex((row) => row.id === updated.id);
+  if (index >= 0) riderJobRows[index] = updated;
+  else riderJobRows.push(updated);
+}
+
+function routeRowMatchesActiveFilters(row) {
+  if (row.status === "Deleted") return false;
+  const search = document.querySelector("#route-search")?.value.trim().toLowerCase() || "";
+  if (search && !`${row.ref_no} ${row.client_name}`.toLowerCase().includes(search)) return false;
+  if (!routeStatusFilterMatches(row, routeStatusChipFilter)) return false;
+  if (routeRiderChipFilter === "__unassigned") return !row.assigned_rider;
+  if (row.scheduled_date !== dateKey(new Date())) return false;
+  return !routeRiderChipFilter || row.assigned_rider === routeRiderChipFilter;
+}
+
+function waitForRouteTransition(element, propertyName, timeoutMs) {
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.clearTimeout(timeout);
+      element.removeEventListener("transitionend", onTransitionEnd);
+      resolve();
+    };
+    const onTransitionEnd = (event) => {
+      if (event.propertyName === propertyName) finish();
+    };
+    const timeout = window.setTimeout(finish, timeoutMs);
+    element.addEventListener("transitionend", onTransitionEnd);
+  });
+}
+
+async function animateRouteAction(row, action, staysInView) {
+  if (!row?.isConnected) return;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const actionClass = `route-row-${action}`;
+  row.classList.add(actionClass);
+  void row.offsetWidth;
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  if (staysInView) {
+    await new Promise((resolve) => window.setTimeout(resolve, reducedMotion ? 100 : 150));
+    row.classList.remove(actionClass);
+    await new Promise((resolve) => window.setTimeout(resolve, reducedMotion ? 120 : 150));
+    return;
+  }
+  const movement = waitForRouteTransition(row, reducedMotion ? "opacity" : "transform", 600);
+  row.classList.add("route-row-leaving");
+  await movement;
+  if (reducedMotion) {
+    row.remove();
+    return;
+  }
+  [...row.cells].forEach((cell) => {
+    cell.style.height = `${cell.getBoundingClientRect().height}px`;
+  });
+  void row.offsetHeight;
+  const collapse = waitForRouteTransition(row, "height", 250);
+  row.classList.add("route-row-collapsing");
+  await collapse;
+  row.remove();
+}
+
+function refreshRouteStickyScrollbar() {
+  const wrapper = document.querySelector("#route-rider-table-wrap");
+  const scrollbar = document.querySelector("#route-table-sticky-scrollbar");
+  const spacer = scrollbar?.firstElementChild;
+  const table = document.querySelector("#route-admin-table");
+  if (!wrapper || !scrollbar || !spacer || !table) return;
+  spacer.style.width = `${table.scrollWidth}px`;
+  scrollbar.classList.toggle("hidden", table.scrollWidth <= wrapper.clientWidth + 1);
+  if (!routeScrollSyncing) scrollbar.scrollLeft = wrapper.scrollLeft;
+}
+
+function initializeRouteStickyScrollbar() {
+  const wrapper = document.querySelector("#route-rider-table-wrap");
+  const scrollbar = document.querySelector("#route-table-sticky-scrollbar");
+  if (!wrapper || !scrollbar) return;
+  wrapper.addEventListener("scroll", () => {
+    if (routeScrollSyncing) return;
+    routeScrollSyncing = true;
+    scrollbar.scrollLeft = wrapper.scrollLeft;
+    routeScrollSyncing = false;
+  });
+  scrollbar.addEventListener("scroll", () => {
+    if (routeScrollSyncing) return;
+    routeScrollSyncing = true;
+    wrapper.scrollLeft = scrollbar.scrollLeft;
+    routeScrollSyncing = false;
+  });
+  window.addEventListener("resize", refreshRouteStickyScrollbar);
+}
+
+async function updateRiderJob(id, values, button) {
   setBusy(button, true);
   try {
     const { data, error } = await client.from("rider_jobs").update(values)
-      .eq("id", id).select("id").maybeSingle();
+      .eq("id", id).select("*").maybeSingle();
     if (error) throw error;
     if (!data) throw new Error("This rider job could not be updated. Refresh and try again.");
-    toast(success);
-    await loadRiderJobs(true);
-    return true;
+    return data;
   } catch (error) {
     toast(error.message || "Could not update rider job.", "error");
-    return false;
+    return null;
   } finally {
     setBusy(button, false);
   }
@@ -604,6 +768,7 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
   document.querySelector("#route-riders-panel").classList.toggle("hidden", !routeAdmin);
   await loadRiderUsers();
   if (routeAdmin) {
+    initializeRouteStickyScrollbar();
     const { data: requesters, error: requestersError } = await client.from("profiles").select("id,full_name").eq("active", true);
     if (requestersError) throw requestersError;
     requesterNames = new Map((requesters || []).map((user) => [user.id, user.full_name]));
@@ -611,7 +776,6 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
       `<tr><td>${escapeHtml(user.full_name)}</td><td>${escapeHtml(user.username)}</td><td>${user.active ? "Active" : "Inactive"}</td></tr>`
     ).join("");
     initializeScrollableTables(document.querySelector("#route-riders-rows").closest("table"));
-    document.querySelector("#route-search").addEventListener("input", debounce(() => { void loadRiderJobs(true); }));
     document.querySelector("#route-more").addEventListener("click", () => { void loadRiderJobs(false); });
     await initializeRouteRiderFilters();
   }
@@ -621,11 +785,11 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
     const dialog = document.querySelector("#delivery-activity-dialog");
     let routeActivityTileTrigger = null;
     const cards = [
-      { label: "Received", dateColumn: "created_at" },
-      { label: "Assigned", dateColumn: "assigned_at" },
-      { label: "In progress", dateColumn: "started_at" },
-      { label: "Finished", dateColumn: "finished_at" },
-      { label: "Declined", dateColumn: "declined_at" }
+      { label: "Received", dateColumn: "created_at", excludeStatus: "Deleted" },
+      { label: "Assigned", dateColumn: "assigned_at", excludeStatus: "Deleted" },
+      { label: "In progress", dateColumn: "started_at", excludeStatus: "Deleted" },
+      { label: "Finished", dateColumn: "finished_at", excludeStatus: "Deleted" },
+      { label: "Declined", dateColumn: "declined_at", excludeStatus: "Deleted" }
     ];
     const updateTileSelection = () => {
       tiles.querySelectorAll(".delivery-activity-tile").forEach((tile, index) =>
@@ -727,7 +891,15 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
   client.channel(`rider-jobs-${profile.id}`).on("postgres_changes", {
     event: "*", schema: "public", table: "rider_jobs"
   }, () => { void loadRiderJobs(true); }).subscribe();
-  startVisibleRefresh(() => loadRiderJobs(true), {
+  startVisibleRefresh(async () => {
+    if (routeAdmin) {
+      await loadRiderUsers();
+      const activeRiderIds = new Set(riderUsers.filter((rider) => rider.active).map((rider) => rider.id));
+      if (routeRiderChipFilter !== "__unassigned" && routeRiderChipFilter !== ""
+        && !activeRiderIds.has(routeRiderChipFilter)) routeRiderChipFilter = "__unassigned";
+    }
+    await loadRiderJobs(true);
+  }, {
     intervalMs: 60000,
     visibilityMinAgeMs: 60000,
     lastRefreshAt: () => riderJobsLastLoadedAt
