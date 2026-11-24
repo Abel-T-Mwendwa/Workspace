@@ -1,6 +1,8 @@
 
 # Workspace
 
+See [Architecture](docs/ARCHITECTURE.md) for the JavaScript module map and page lifecycle.
+
 A static, role-based app for artwork requests, deliveries, and riders. The front end is plain HTML, CSS, and JavaScript, hosted on GitHub Pages; Supabase provides Auth, Postgres/RLS, Realtime, and the two Edge Functions. There is no application server.
 
 ## Assumptions

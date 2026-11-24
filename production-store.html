@@ -31,6 +31,12 @@
       <p id="delivery-empty" class="empty-state hidden">No matching deliveries</p>
     </section>
   </main>
+  <dialog id="delivery-edit-dialog" class="line-editor-dialog production-store-edit-dialog">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2 id="delivery-edit-title">Edit production entry</h2><button type="button" class="secondary" id="production-edit-release-history">Release history</button><button type="button" class="icon-button" data-delivery-edit-cancel aria-label="Close">×</button></div>
+      <div id="delivery-edit-form-slot"></div>
+    </div>
+  </dialog>
   <dialog id="delivery-items-dialog" class="line-editor-dialog delivery-items-dialog">
     <div class="line-dialog-content">
       <div class="section-heading"><h2>Item details</h2><button type="button" class="icon-button" data-items-close aria-label="Close">×</button></div>
@@ -44,6 +50,23 @@
       <div class="section-heading"><h2>Items</h2><button type="button" class="icon-button" data-items-view-close aria-label="Close">×</button></div>
       <div id="delivery-items-view-content" class="table-wrap"></div>
       <div class="dialog-actions"><button type="button" class="primary" data-items-view-close>Close</button></div>
+    </div>
+  </dialog>
+  <dialog id="partial-release-dialog" class="line-editor-dialog delivery-items-dialog">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2>Released now?</h2></div>
+      <form id="partial-release-form">
+        <div id="partial-release-lines"></div>
+        <p id="partial-release-message" class="form-message" role="alert"></p>
+        <div class="dialog-actions"><button type="button" class="quiet" data-partial-release-cancel>Cancel</button><button type="submit" class="primary">Release</button></div>
+      </form>
+    </div>
+  </dialog>
+  <dialog id="release-history-dialog" class="line-editor-dialog delivery-items-dialog">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2>Release history</h2><button type="button" class="icon-button" data-release-history-close aria-label="Close">×</button></div>
+      <div id="release-history-content" class="table-wrap"></div>
+      <div class="dialog-actions"><button type="button" class="primary" data-release-history-close>Close</button></div>
     </div>
   </dialog>
   <dialog id="delivery-view-dialog"><div class="section-heading"><h2>Delivery details</h2><button type="button" class="icon-button" data-delivery-view-close aria-label="Close">×</button></div><div id="delivery-view-content"></div></dialog>

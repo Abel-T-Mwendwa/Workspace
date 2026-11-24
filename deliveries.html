@@ -98,6 +98,13 @@
     </div>
   </dialog>
   <dialog id="delivery-view-dialog"><div class="section-heading"><h2>Delivery details</h2><button type="button" class="icon-button" data-delivery-view-close aria-label="Close">×</button></div><div id="delivery-view-content"></div></dialog>
+  <dialog id="dispatch-dialog" class="line-editor-dialog" style="width:min(560px,95vw);max-height:90vh;overflow:auto" aria-labelledby="dispatch-dialog-title">
+    <div class="line-dialog-content">
+      <div class="section-heading"><h2 id="dispatch-dialog-title">Dispatch</h2><button type="button" class="icon-button" data-dispatch-close aria-label="Close">×</button></div>
+      <div id="dispatch-dialog-content"></div>
+      <p id="dispatch-dialog-message" class="form-message" role="alert"></p>
+    </div>
+  </dialog>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
   <script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
 </body>

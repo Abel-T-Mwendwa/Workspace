@@ -262,7 +262,7 @@ export async function initSales({ profile: currentProfile, page: currentPage }) 
   page = currentPage;
   initArtworkDialogs();
   document.querySelector("#current-user").textContent = profile.full_name;
-  const [rows, loadedUsers] = await Promise.all([loadArtworks(), loadUsers()]);
+  await Promise.all([loadArtworks(), loadUsers()]);
   await loadWorkNotes();
   bindSortableHeaders();
   renderSalesTallies();
@@ -284,7 +284,6 @@ export async function initSales({ profile: currentProfile, page: currentPage }) 
   });
   subscribeToChanges();
   startVisibleRefresh(refreshArtworks, { intervalMs: 3 * 60 * 1000 });
-  void loadedUsers;
 }
 
 

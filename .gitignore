@@ -1,10 +1,19 @@
 .env
 .env.*
 !.env.example
+config.staging.local.js
 node_modules/
 qa/QA_REFERENCE.md
 qa/QA_REPORT.md
 supabase
+!supabase/
+supabase/*
+!supabase/partial_logic.sql
+!supabase/cutover.sql
+!supabase/staging_seed.sql
+!supabase/tests/
+supabase/tests/*
+!supabase/tests/partial_logic_test.sql
 ssh key
 ssh key.pub
 id_rsa
@@ -18,3 +27,4 @@ id_ed25519
 *.keystore
 EGRESS_AUDIT.md
 sql/
+schema.sqlsupabase/.temp/

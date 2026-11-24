@@ -9,7 +9,6 @@ import {
 } from "../utils/delivery-rows.js";
 
 let profile;
-let page;
 
 const STATUS_BOARD_REFRESH_MS = 3 * 60 * 1000;
 const STATUS_BOARD_PROFILES_TTL_MS = 10 * 60 * 1000;
@@ -363,13 +362,6 @@ function statusBoardStatusCounts(counts) {
     .map(([label, count]) => `${count} ${label}`).join(" · ");
 }
 
-function statusBoardItems(row) {
-  const items = Array.isArray(row.items) ? row.items : [];
-  if (!items.length) return "—";
-  const first = `${String(items[0].item_name || "—")} × ${String(items[0].quantity || "—")} pcs`;
-  return `${first}${items.length > 1 ? ` +${items.length - 1} more` : ""}`;
-}
-
 function statusBoardFullItems(row) {
   const items = Array.isArray(row.items) ? row.items : [];
   if (!items.length) return "—";
@@ -539,35 +531,6 @@ function statusBoardFormatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Nairobi" }).format(date);
-}
-
-function statusBoardTimelineRows(row) {
-  const current = statusBoardStageOf(row);
-  const currentIndex = STATUS_BOARD_STAGES.findIndex(([key]) => key === current);
-  return STATUS_BOARD_STAGES.map(([stage, label], index) => {
-    const done = index < currentIndex || stage === "delivered" && current === "delivered";
-    const isCurrent = stage === current && !done;
-    const colour = done ? "green" : isCurrent ? statusBoardRecordColour(row, stage) : "grey";
-    const whoId = stage === "production_store" ? row.created_by : null;
-    const time = stage === "production_store" ? row.created_at
-      : stage === "production" && row.production_status === "Ready" ? row.ready_at
-        : stage === "dispatch" ? row.dispatched_at || row.ready_at
-          : stage === "delivered" ? row.delivered_at : null;
-    const who = whoId ? statusBoardProfiles.get(whoId) || "—" : "—";
-    const status = statusBoardDisplayStatus(row, stage);
-    const marker = done ? "✓" : isCurrent ? "●" : "○";
-    return `<li class="status-board-timeline-step ${done ? "is-complete" : isCurrent ? `is-current status-board-timeline-${colour}` : "is-future"}">
-      <span class="status-board-timeline-marker" aria-hidden="true">${marker}</span><div><strong>${escapeHtml(label)}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span>
-      <small>Who: ${escapeHtml(who)} · When: ${escapeHtml(statusBoardFormatDateTime(time))}</small></div></li>`;
-  }).join("");
-}
-
-function statusBoardOpenTimeline(id) {
-  const row = statusBoardRows.find((record) => record.id === id);
-  if (!row) return;
-  document.querySelector("#status-board-dialog-title").textContent = `${row.ref_no || "Delivery"} · SR ${row.sr}`;
-  document.querySelector("#status-board-timeline").innerHTML = `<ol class="status-board-timeline">${statusBoardTimelineRows(row)}</ol>`;
-  document.querySelector("#status-board-dialog").showModal();
 }
 
 function statusBoardRender() {
@@ -999,7 +962,6 @@ function statusBoardSelectTab(tabName, focus = false) {
 
 export async function initStatusBoard({ profile: currentProfile, page: currentPage }) {
   profile = currentProfile;
-  page = currentPage;
   if (!canSeeStatusBoard(profile)) {
     location.replace(`./${homePageForRole()}`);
     return;
