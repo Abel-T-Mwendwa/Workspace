@@ -2933,7 +2933,7 @@ function openDeliveryItemsView(row, trigger) {
   content.innerHTML = `${heading}<table><thead>${headers}</thead><tbody>${items.map((item) => {
     const progress = productionStore ? productionItemProgress(row.id, item.item_key) : null;
     return productionStore
-      ? `<tr><td>${escapeHtml(item.so_number || "—")}</td><td>${escapeHtml(`${item.item_name || "Item"} ${progress ? `${progress.released}/${progress.job_card_total}` : "—/—"`)}</td></tr>`
+      ? `<tr><td>${escapeHtml(item.so_number || "—")}</td><td>${escapeHtml(`${item.item_name || "Item"} ${progress ? `${progress.released}/${progress.job_card_total}` : "—/—"}`)}</td></tr>`
       : `<tr><td>${escapeHtml(item.so_number)}</td><td>${escapeHtml(item.item_name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.address)}</td>${goodsStatusColumn ? `<td>${escapeHtml(deliveryGoodsStatusLabel(item.goods_status))}</td>` : ""}</tr>`;
   }).join("")}</tbody></table>`;
   initializeScrollableTables(content.querySelector("table"));
