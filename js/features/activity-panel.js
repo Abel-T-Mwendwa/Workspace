@@ -116,6 +116,7 @@ export function activityQuery(table, period, card, columns, options = {}) {
       : value === null ? query.is(column, null)
       : value === "notNull" ? query.not(column, "is", null) : query.eq(column, value);
   }
+  if (card.excludeStatus) query = query.neq("status", card.excludeStatus);
   return query;
 }
 
@@ -156,7 +157,7 @@ export async function renderPeriodSummary(rootId, periodId, table, cards, should
   let counts;
   if (rootId === "route-tallies") {
     const rowsByCard = await Promise.all(cards.map((card) => activityRows(table, period, card,
-      "id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,details,assigned_rider,rider_time,rider_time_end,status")));
+      "id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,details,assigned_rider,rider_time,rider_time_end,scheduled_date,status")));
     setRouteRows(rowsByCard);
     counts = rowsByCard.map((rows) => rows.length);
   } else {

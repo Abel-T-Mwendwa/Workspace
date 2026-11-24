@@ -584,7 +584,7 @@ function notificationDestination(item, profile) {
   const page = type.startsWith("artwork_work_note_")
     ? profile.role === "salesperson" ? "sales.html" : "designer.html"
     : type.startsWith("delivery_") ? "deliveries.html"
-    : type === "rider_job_assigned" && profile.role === "rider" ? "my-jobs.html"
+    : ["rider_job_assigned", "rider_job_deleted"].includes(type) && profile.role === "rider" ? "my-jobs.html"
       : type === "rider_request_new" && hasRouteAdminAccess(profile) ? "route-admin.html" : "riders.html";
   return `./${page}?open=${encodeURIComponent(item.related_id)}`;
 }
@@ -604,6 +604,7 @@ function notificationLabel(type) {
     rider_job_assigned_sales: "Rider assigned to your request",
     rider_job_started: "Rider started your job",
     rider_job_finished: "Rider finished your job",
+    rider_job_deleted: "Rider job deleted",
     artwork_work_note_designer: "Designer added a work note",
     artwork_work_note_salesperson: "Salesperson replied to a work note"
   }[type] || "Update";
