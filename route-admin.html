@@ -8,7 +8,7 @@
     <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="route-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="route-tallies" class="stats-grid"></div></section>
     <section class="panel" id="route-admin-panel">
       <div class="section-heading"><h2>Rider requests</h2><span id="rider-job-count" class="muted"></span></div>
-      <div class="toolbar"><input id="route-search" placeholder="Search reference or client"><button type="button" class="secondary hidden" id="route-more">Load more</button></div>
+      <div class="toolbar"><input id="route-search" placeholder="Search reference or client"></div>
       <div id="route-rider-filter" class="route-chip-filter"><span>Rider</span><div id="route-rider-chips" class="production-goods-chips route-filter-chips" role="group" aria-label="Filter by rider"></div></div>
       <div class="route-chip-filter"><span>Status</span><div id="route-status-chips" class="production-goods-chips route-filter-chips" role="group" aria-label="Filter by status"></div></div>
       <p class="route-filter-summary"><span id="route-results-count">Showing 0 requests</span><span id="route-active-filters"></span></p>
@@ -16,7 +16,6 @@
       <div id="route-table-sticky-scrollbar" class="route-table-sticky-scrollbar hidden" aria-hidden="true"><div></div></div>
       <p id="route-rider-empty" class="empty-state hidden">No rider requests match these filters.</p>
     </section>
-    <section class="panel hidden" id="route-riders-panel"><div class="section-heading"><h2>Riders</h2></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Status</th></tr></thead><tbody id="route-riders-rows"></tbody></table></div></section>
     <section class="panel hidden" id="rider-request-panel"></section>
     <section class="panel hidden" id="riders-list-panel"></section>
   </main>

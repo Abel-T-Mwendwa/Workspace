@@ -1017,10 +1017,27 @@ textarea:focus {
   padding-bottom: 0;
 }
 
+#route-admin-panel {
+  width: 100%;
+  max-width: none;
+}
+
+#route-rider-table-wrap {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#route-table-sticky-scrollbar {
+  display: none !important;
+}
+
 #route-admin-table.table-scroll-content {
   width: 100% !important;
-  min-width: 0 !important;
-  table-layout: fixed;
+  min-width: 1900px !important;
+  table-layout: auto;
 }
 
 #route-admin-table th,
@@ -1034,28 +1051,33 @@ textarea:focus {
   display: none;
 }
 
-#route-admin-table th:nth-child(1),
-#route-admin-table td:nth-child(1) { width: 0 !important; }
-#route-admin-table th:nth-child(2),
-#route-admin-table td:nth-child(2) { width: 8% !important; }
-#route-admin-table th:nth-child(3),
-#route-admin-table td:nth-child(3) { width: 13% !important; }
-#route-admin-table th:nth-child(4),
-#route-admin-table td:nth-child(4) { width: 15.2% !important; }
-#route-admin-table th:nth-child(5),
-#route-admin-table td:nth-child(5) { width: 6% !important; }
-#route-admin-table th:nth-child(6),
-#route-admin-table td:nth-child(6) { width: 9% !important; }
-#route-admin-table th:nth-child(7),
-#route-admin-table td:nth-child(7) { width: 9% !important; }
-#route-admin-table th:nth-child(8),
-#route-admin-table td:nth-child(8) { width: 17% !important; }
-#route-admin-table th:nth-child(9),
-#route-admin-table td:nth-child(9) { width: 8% !important; }
-#route-admin-table th:nth-child(10),
-#route-admin-table td:nth-child(10) { width: 9% !important; }
 #route-admin-table th:nth-child(11),
-#route-admin-table td:nth-child(11) { width: 5.8% !important; }
+#route-admin-table td:nth-child(11) { width: 240px !important; min-width: 240px; }
+
+#route-admin-table td button {
+  height: 40px;
+  min-height: 40px;
+}
+
+#route-admin-table .rider-assignment-control {
+  min-width: 300px;
+}
+
+.route-row-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+#route-admin-table td .route-row-actions > button {
+  display: inline-flex;
+  flex: 0 0 90px;
+  width: 90px !important;
+  min-width: 90px;
+  max-width: 90px;
+}
 
 #route-admin-table td button[data-rider-decline],
 #route-admin-table td button[data-rider-delete] {
@@ -1132,8 +1154,8 @@ textarea:focus {
 
 @media (max-width: 1100px) {
   #route-admin-table.table-scroll-content {
-    width: 1050px !important;
-    min-width: 1050px !important;
+    width: 1900px !important;
+    min-width: 1900px !important;
   }
 }
 
