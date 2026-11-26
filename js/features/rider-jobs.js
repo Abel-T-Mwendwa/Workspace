@@ -30,10 +30,13 @@ let riderHasMore = false;
 let riderQueryToken = 0;
 let riderUsers = [];
 let requesterNames = new Map();
-let routeRiderTotalCount = 0;
+let routeRiderCapped = false;
 let routePillCountRows = [];
+let routePillCountRequestToken = 0;
 let routeActivityTileFilter = null;
 let routeActivityRows = [];
+let routeEditingJobId = null;
+let routeEditError = "";
 const ROUTE_RIDER_FILTERS_KEY = "routeRiderFilters";
 let activeRiderJobCount = 0;
 const RIDER_PAGE_SIZE = 20;
@@ -176,17 +179,19 @@ function applyRouteSearch(query, search) {
 }
 
 async function loadRoutePillCountRows(search) {
+  const requestToken = ++routePillCountRequestToken;
   let offset = 0;
   const rows = [];
   while (true) {
     let query = client.from("rider_jobs")
-      .select("id,assigned_rider,status,scheduled_date,ref_no,client_name")
+      .select("id,assigned_rider,status,scheduled_date,finished_at,ref_no,client_name")
       .neq("status", "Deleted")
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
     query = applyRouteSearch(query, search);
     const { data, error } = await query.range(offset, offset + 999);
     if (error) throw error;
+    if (requestToken !== routePillCountRequestToken) return;
     rows.push(...(data || []));
     if ((data || []).length < 1000) break;
     offset += 1000;
@@ -205,11 +210,17 @@ async function initializeRouteRiderFilters() {
   saveRouteRiderFilters();
 }
 
+function nairobiFinishedTodayRange() {
+  const start = `${new Date(Date.now() + 10800000).toISOString().slice(0, 10)}T00:00:00+03:00`;
+  return { start, end: new Date(Date.parse(start) + 86400000).toISOString() };
+}
+
 async function loadRiderJobs(reset = true) {
+  const routeAdmin = hasRouteAdminAccess(profile) && page === "route-admin.html";
   const token = ++riderQueryToken;
   const previousIds = new Set(riderJobRows.map((row) => row.id));
   const wasLoaded = riderJobRows.length > 0;
-  if (reset) {
+  if (reset && !routeAdmin) {
     riderOffset = 0;
     riderHasMore = false;
   }
@@ -222,22 +233,26 @@ async function loadRiderJobs(reset = true) {
     document.querySelector("#my-jobs-list").setAttribute("aria-busy", "true");
     if (reset) document.querySelector("#my-jobs-list").classList.add("hidden");
   }
-  const routeAdmin = hasRouteAdminAccess(profile) && page === "route-admin.html";
   const search = document.querySelector("#route-search")?.value.trim() || "";
   const routeFilters = routeAdmin ? routeRiderFilterValues() : null;
   let base = client.from("rider_jobs").select("id,sr,ref_no,created_at,created_by,client_name,contact_name,contact_number,address,job_type,details,expected_time,scheduled_date,assigned_rider,rider_time,rider_time_end,status,decline_reason,declined_at,assigned_at,started_at,finished_at", routeAdmin || myJobs ? { count: "exact" } : undefined);
   if (routeAdmin) {
-    base = base.neq("status", "Deleted");
+    const finishedToday = nairobiFinishedTodayRange();
+    base = base.neq("status", "Deleted").neq("status", "Declined");
     if (routeFilters.rider === "__unassigned") base = base.is("assigned_rider", null);
     else {
-      base = base.eq("scheduled_date", dateKey(new Date()));
       if (routeFilters.rider) base = base.eq("assigned_rider", routeFilters.rider);
     }
     const statuses = routeFilters.status === "active"
       ? ["Not started", "Started", "In progress"]
       : routeFilters.status === "In progress" ? ["Started", "In progress"]
-        : routeFilters.status ? [routeFilters.status] : null;
+        : routeFilters.status && routeFilters.status !== "Finished" ? [routeFilters.status] : null;
     if (statuses) base = base.in("status", statuses);
+    else if (routeFilters.status === "Finished") {
+      base = base.eq("status", "Finished").gte("finished_at", finishedToday.start).lt("finished_at", finishedToday.end);
+    } else {
+      base = base.or(`status.in.("Not started","Started","In progress"),and(status.eq.Finished,finished_at.gte.${finishedToday.start},finished_at.lt.${finishedToday.end})`);
+    }
   }
   if (profile.role === "rider" && !routeAdmin) base = base.eq("assigned_rider", profile.id).neq("status", "Deleted");
   else if (!routeAdmin) base = base.eq("created_by", profile.id);
@@ -253,14 +268,28 @@ async function loadRiderJobs(reset = true) {
     if (myJobs) console.log("[TEMP-DEBUG] query start", { riderId: profile.id, reset, offset: riderOffset }); // TEMP-DEBUG
     let orderedQuery = base.order(routeAdmin ? "created_at" : "sr", { ascending: !routeAdmin });
     if (myJobs) orderedQuery = orderedQuery.order("id", { ascending: true });
-    const { data, error, count } = await orderedQuery.range(riderOffset, riderOffset + RIDER_PAGE_SIZE - 1);
-    if (myJobs) console.log("[TEMP-DEBUG] query result", { rows: data?.length || 0, count, error }); // TEMP-DEBUG
-    if (error) throw error;
-    const rows = data || [];
+    let rows = [];
+    let count;
+    if (routeAdmin) {
+      for (let offset = 0; offset < 2000; offset += 1000) {
+        const { data, error, count: total } = await orderedQuery.range(offset, offset + 999);
+        if (error) throw error;
+        if (token !== riderQueryToken) return;
+        rows.push(...(data || []));
+        if (total != null) count = total;
+        if ((data || []).length < 1000) break;
+      }
+      routeRiderCapped = rows.length === 2000 && count > rows.length;
+    } else {
+      const { data, error, count: total } = await orderedQuery.range(riderOffset, riderOffset + RIDER_PAGE_SIZE - 1);
+      if (myJobs) console.log("[TEMP-DEBUG] query result", { rows: data?.length || 0, count: total, error }); // TEMP-DEBUG
+      if (error) throw error;
+      rows = data || [];
+      count = total;
+    }
     if (token !== riderQueryToken) return;
-    riderJobRows = reset ? rows : [...riderJobRows, ...rows.filter((row) => !riderJobRows.some((old) => old.id === row.id))];
-    riderOffset = reset ? rows.length : riderOffset + rows.length;
-    if (routeAdmin) routeRiderTotalCount = count || 0;
+    riderJobRows = routeAdmin || reset ? rows : [...riderJobRows, ...rows.filter((row) => !riderJobRows.some((old) => old.id === row.id))];
+    if (!routeAdmin) riderOffset = reset ? rows.length : riderOffset + rows.length;
     if (myJobs) riderHasMore = riderOffset < (count || 0);
     if (profile.role === "rider") {
       try {
@@ -284,9 +313,6 @@ async function loadRiderJobs(reset = true) {
           if (!previousIds.has(row.dataset.entryId)) row.classList.add("portal-new-row");
         });
     }
-    document.querySelector("#route-more")?.classList.toggle("hidden", routeAdmin
-      ? riderOffset >= routeRiderTotalCount
-      : rows.length < RIDER_PAGE_SIZE);
     riderJobsLastLoadedAt = Date.now();
   } catch (error) {
     if (token !== riderQueryToken) return;
@@ -304,33 +330,37 @@ async function loadRiderJobs(reset = true) {
 }
 
 function riderAssignmentControls(row) {
-  if (row.status !== "Not started" || !hasRouteAdminAccess(profile)) {
+  const editing = routeEditingJobId === row.id;
+  if ((!editing && row.status !== "Not started") || !hasRouteAdminAccess(profile)) {
     return row.assigned_rider ? escapeHtml(riderUsers.find((user) => user.id === row.assigned_rider)?.full_name || "Assigned rider") : "—";
   }
-  const riderOptions = riderUsers.filter((user) => user.active).map((user) =>
-    `<option value="${escapeHtml(user.id)}">${escapeHtml(user.full_name)}</option>`).join("");
+  const riderOptions = riderUsers.filter((user) => user.active || (editing && user.id === row.assigned_rider)).map((user) =>
+    `<option value="${escapeHtml(user.id)}"${editing && user.id === row.assigned_rider ? " selected" : ""}>${escapeHtml(user.full_name)}</option>`).join("");
   const slots = riderTimeSlots().map((slot) =>
-    `<option value="${slot.start}" data-end="${slot.end}">${escapeHtml(slot.label)}</option>`).join("");
+    `<option value="${slot.start}" data-end="${slot.end}"${editing && slot.start === row.rider_time ? " selected" : ""}>${escapeHtml(slot.label)}</option>`).join("");
   return `<div class="rider-assignment-control"><select data-rider-choice="${escapeHtml(row.id)}"><option value="">Choose rider</option>${riderOptions}</select>
     <select data-rider-slot="${escapeHtml(row.id)}"><option value="">Choose hourly slot</option>${slots}</select>
-    <button type="button" class="primary" data-rider-assign="${escapeHtml(row.id)}">Assign</button></div>`;
+    ${editing
+      ? `<button type="button" class="primary" data-rider-edit-save="${escapeHtml(row.id)}">Save</button>`
+      : `<button type="button" class="primary" data-rider-assign="${escapeHtml(row.id)}">Assign</button>`}</div>`;
 }
 
 function renderRouteRiderChips() {
-  const today = dateKey(new Date());
   const chips = [
     { value: "__unassigned", label: "Pending", style: "pending" },
     { value: "", label: "All", style: "all" },
     ...riderUsers.filter((rider) => rider.active).map((rider) =>
       ({ value: rider.id, label: rider.full_name, style: "ready" }))
   ];
-  const counts = new Map(chips.map(({ value }) => {
-    const count = routePillCountRows.filter((row) => routeStatusFilterMatches(row, routeStatusChipFilter)
-      && (value === "__unassigned" ? !row.assigned_rider
-        : value === "" ? row.scheduled_date === today
-          : row.assigned_rider === value && row.scheduled_date === today)).length;
-    return [value, count];
-  }));
+  const countsByAssignment = new Map();
+  for (const row of routePillCountRows) {
+    if (!routeStatusFilterMatches(row, routeStatusChipFilter)) continue;
+    const key = row.assigned_rider || "__unassigned";
+    countsByAssignment.set(key, (countsByAssignment.get(key) || 0) + 1);
+  }
+  // All is the sum of Pending and every assigned-rider bucket, including inactive riders.
+  countsByAssignment.set("", Array.from(countsByAssignment.values()).reduce((sum, count) => sum + count, 0));
+  const counts = new Map(chips.map(({ value }) => [value, countsByAssignment.get(value) || 0]));
   if (routeRiderChipFilter !== "__unassigned" && routeRiderChipFilter !== ""
     && !chips.some(({ value }) => value === routeRiderChipFilter)) routeRiderChipFilter = "__unassigned";
   renderStatusChipButtons(document.querySelector("#route-rider-chips"), chips, counts,
@@ -342,10 +372,13 @@ function renderRouteRiderChips() {
 }
 
 function routeStatusFilterMatches(row, value) {
-  if (!value) return true;
-  if (value === "active") return !["Finished", "Declined"].includes(row.status);
+  const activeStatuses = ["Not started", "Started", "In progress"];
+  if (value === "active") return activeStatuses.includes(row.status);
   if (value === "In progress") return ["Started", "In progress"].includes(row.status);
-  return row.status === value;
+  if (activeStatuses.includes(row.status)) return !value;
+  if (row.status !== "Finished" || (value && value !== "Finished")) return false;
+  const { start, end } = nairobiFinishedTodayRange(), at = Date.parse(row.finished_at);
+  return Number.isFinite(at) && at >= Date.parse(start) && at < Date.parse(end);
 }
 
 function renderRouteActivityRows(rows) {
@@ -384,13 +417,11 @@ function renderRouteActivityRows(rows) {
 }
 
 function renderRouteStatusChips() {
-  const today = dateKey(new Date());
   const counts = new Map(ROUTE_STATUS_CHIPS.map(({ value }) => [value,
     routePillCountRows.filter((row) => {
       const riderMatches = routeRiderChipFilter === "__unassigned"
         ? !row.assigned_rider
-        : routeRiderChipFilter === "" ? row.scheduled_date === today
-          : row.assigned_rider === routeRiderChipFilter && row.scheduled_date === today;
+        : routeRiderChipFilter === "" || row.assigned_rider === routeRiderChipFilter;
       return riderMatches && routeStatusFilterMatches(row, value);
     }).length
   ]));
@@ -439,7 +470,9 @@ function renderRiderJobs() {
     renderRouteRiderChips();
     renderRouteStatusChips();
   }
-  const markup = (rows, canAssign) => rows.map((row) => `<tr data-entry-id="${escapeHtml(row.id)}">${canAssign
+  const markup = (rows, canAssign) => rows.map((row) => {
+    const editing = canAssign && routeEditingJobId === row.id;
+    return `<tr data-entry-id="${escapeHtml(row.id)}">${canAssign
     ? `<td class="col-sr-ref"><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>`
     : `<td><strong>${escapeHtml(row.sr)} · ${escapeHtml(row.ref_no)}</strong></td>`}
     ${canAssign ? `<td>${escapeHtml(requesterNames.get(row.created_by) || "Salesperson")}</td>` : ""}
@@ -449,11 +482,14 @@ function renderRiderJobs() {
     ${canAssign ? `<td>${escapeHtml(localDateTime(row.created_at))}</td>` : ""}
     <td>${canAssign ? riderAssignmentControls(row) : escapeHtml(row.assigned_rider ? riderUsers.find((user) => user.id === row.assigned_rider)?.full_name || "Assigned rider" : "Not assigned yet")}</td><td>${escapeHtml(riderSlotText(row))}</td>
     <td>${escapeHtml(row.status)}${row.decline_reason ? `<br><small>${escapeHtml(localDateTime(row.declined_at))} · ${escapeHtml(row.decline_reason)}</small>` : ""}${row.started_at ? `<br><small>Started ${escapeHtml(localDateTime(row.started_at))}</small>` : ""}${row.finished_at ? `<br><small>Finished ${escapeHtml(localDateTime(row.finished_at))}</small>` : ""}</td>
-    ${canAssign ? `<td>${!row.assigned_rider && row.status === "Not started"
-      ? `<button type="button" class="danger" data-rider-decline="${escapeHtml(row.id)}">Decline</button>`
+    ${canAssign ? `<td>${editing
+      ? `<div class="route-row-actions"><button type="button" class="quiet" data-rider-edit-cancel="${escapeHtml(row.id)}">Cancel</button></div><small data-rider-edit-error="${escapeHtml(row.id)}" role="alert">${escapeHtml(routeEditError)}</small>`
+      : !row.assigned_rider && row.status === "Not started"
+      ? `<div class="route-row-actions"><button type="button" class="danger" data-rider-decline="${escapeHtml(row.id)}">Decline</button></div>`
       : row.assigned_rider && row.status !== "Deleted"
-        ? `<button type="button" class="danger" data-rider-delete="${escapeHtml(row.id)}"${row.started_at || ["In progress", "Finished"].includes(row.status) ? ' disabled title="Rider has already started this entry"' : ""}>Delete</button>`
-        : "—"}</td>` : ""}</tr>`).join("");
+        ? `<div class="route-row-actions">${["Started", "In progress"].includes(row.status) ? `<button type="button" class="secondary" data-rider-edit="${escapeHtml(row.id)}">Edit</button>` : ""}<button type="button" class="danger" data-rider-delete="${escapeHtml(row.id)}"${row.started_at || ["In progress", "Finished"].includes(row.status) ? ' disabled title="Rider has already started this entry"' : ""}>Delete</button></div>`
+        : "—"}</td>` : ""}</tr>`;
+  }).join("");
   if (routeView) {
     const routeRows = document.querySelector("#route-rider-rows");
     routeRows.innerHTML = markup(matchingRows, true);
@@ -514,10 +550,9 @@ function renderRiderJobs() {
       }
     }
     empty.classList.toggle("hidden", matchingRows.length > 0);
-    const requestCount = routeRiderTotalCount === 1 ? "request" : "requests";
-    document.querySelector("#route-results-count").textContent = matchingRows.length < routeRiderTotalCount
-      ? `Showing ${matchingRows.length} of ${routeRiderTotalCount} ${requestCount}`
-      : `Showing ${matchingRows.length} ${requestCount}`;
+    document.querySelector("#route-results-count").textContent = routeRiderCapped
+      ? "Showing first 2,000 requests"
+      : `Showing ${matchingRows.length} ${matchingRows.length === 1 ? "request" : "requests"}`;
     const filters = routeRiderFilterValues();
     const active = [];
     if (filters.rider) {
@@ -539,8 +574,6 @@ function renderRiderJobs() {
     initializeScrollableTables(salesRoot.closest("table"));
     document.querySelector("#sales-rider-empty")?.classList.toggle("hidden", salesRows.length > 0);
   }
-  const loadMore = document.querySelector("#route-more");
-  if (loadMore) loadMore.classList.toggle("hidden", !routeView || riderOffset >= routeRiderTotalCount);
   document.querySelector("#sales-rider-more")?.classList.toggle("hidden", !showSalesView || riderJobRows.length < RIDER_PAGE_SIZE);
   const roots = [routeView ? document.querySelector("#route-rider-rows") : null,
     showSalesView ? document.querySelector("#sales-rider-rows") : null].filter(Boolean);
@@ -575,6 +608,46 @@ function renderRiderJobs() {
         await loadRiderJobs(true);
       } finally {
         finishRouteRowAction(id);
+      }
+    }));
+    root.querySelectorAll("[data-rider-edit]").forEach((button) => button.addEventListener("click", () => {
+      routeEditingJobId = button.dataset.riderEdit;
+      routeEditError = "";
+      renderRiderJobs();
+    }));
+    root.querySelectorAll("[data-rider-edit-cancel]").forEach((button) => button.addEventListener("click", () => {
+      routeEditingJobId = null;
+      routeEditError = "";
+      renderRiderJobs();
+    }));
+    root.querySelectorAll("[data-rider-edit-save]").forEach((button) => button.addEventListener("click", async () => {
+      const id = button.dataset.riderEditSave;
+      const riderSelect = root.querySelector(`[data-rider-choice="${CSS.escape(id)}"]`);
+      const slotSelect = root.querySelector(`[data-rider-slot="${CSS.escape(id)}"]`);
+      const riderId = riderSelect?.value;
+      const slot = slotSelect?.value;
+      const end = slotSelect?.selectedOptions[0]?.dataset.end;
+      const errorNode = root.querySelector(`[data-rider-edit-error="${CSS.escape(id)}"]`);
+      if (!riderId || !slot || !end) {
+        routeEditError = "Choose a rider and hourly slot before saving.";
+        if (errorNode) errorNode.textContent = routeEditError;
+        return;
+      }
+      setBusy(button, true);
+      try {
+        const { data, error } = await client.from("rider_jobs")
+          .update({ assigned_rider: riderId, rider_time: slot, rider_time_end: end })
+          .eq("id", id).select("*").maybeSingle();
+        if (error) throw error;
+        if (!data) throw new Error("Could not save this rider assignment.");
+        routeEditingJobId = null;
+        routeEditError = "";
+        await loadRiderJobs(true);
+      } catch (error) {
+        routeEditError = error.message || "Could not save this rider assignment.";
+        if (errorNode) errorNode.textContent = routeEditError;
+      } finally {
+        setBusy(button, false);
       }
     }));
     root.querySelectorAll("[data-rider-decline]").forEach((button) => button.addEventListener("click", async () => {
@@ -656,12 +729,10 @@ function updateRouteJobCache(updated) {
 }
 
 function routeRowMatchesActiveFilters(row) {
-  if (row.status === "Deleted") return false;
   const search = document.querySelector("#route-search")?.value.trim().toLowerCase() || "";
   if (search && !`${row.ref_no} ${row.client_name}`.toLowerCase().includes(search)) return false;
   if (!routeStatusFilterMatches(row, routeStatusChipFilter)) return false;
   if (routeRiderChipFilter === "__unassigned") return !row.assigned_rider;
-  if (row.scheduled_date !== dateKey(new Date())) return false;
   return !routeRiderChipFilter || row.assigned_rider === routeRiderChipFilter;
 }
 
@@ -765,18 +836,12 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
   requestPanel.classList.toggle("hidden", !canRequest || page === "route-admin.html");
   document.querySelector("#route-admin-panel").classList.toggle("hidden", !routeAdmin);
   document.querySelector("#riders-list-panel").classList.toggle("hidden", !canRequest || page === "route-admin.html");
-  document.querySelector("#route-riders-panel").classList.toggle("hidden", !routeAdmin);
   await loadRiderUsers();
   if (routeAdmin) {
     initializeRouteStickyScrollbar();
     const { data: requesters, error: requestersError } = await client.from("profiles").select("id,full_name").eq("active", true);
     if (requestersError) throw requestersError;
     requesterNames = new Map((requesters || []).map((user) => [user.id, user.full_name]));
-    document.querySelector("#route-riders-rows").innerHTML = riderUsers.map((user) =>
-      `<tr><td>${escapeHtml(user.full_name)}</td><td>${escapeHtml(user.username)}</td><td>${user.active ? "Active" : "Inactive"}</td></tr>`
-    ).join("");
-    initializeScrollableTables(document.querySelector("#route-riders-rows").closest("table"));
-    document.querySelector("#route-more").addEventListener("click", () => { void loadRiderJobs(false); });
     await initializeRouteRiderFilters();
   }
   if (routeAdmin) {
@@ -890,7 +955,7 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
   document.querySelector("#sales-rider-more")?.addEventListener("click", () => { void loadRiderJobs(false); });
   client.channel(`rider-jobs-${profile.id}`).on("postgres_changes", {
     event: "*", schema: "public", table: "rider_jobs"
-  }, () => { void loadRiderJobs(true); }).subscribe();
+  }, () => { void loadRiderJobs(true); if (routeAdmin) document.querySelector("#route-period").dispatchEvent(new Event("change")); }).subscribe();
   startVisibleRefresh(async () => {
     if (routeAdmin) {
       await loadRiderUsers();
@@ -899,6 +964,7 @@ export async function initRiders({ profile: currentProfile, page: currentPage })
         && !activeRiderIds.has(routeRiderChipFilter)) routeRiderChipFilter = "__unassigned";
     }
     await loadRiderJobs(true);
+    if (routeAdmin) document.querySelector("#route-period").dispatchEvent(new Event("change"));
   }, {
     intervalMs: 60000,
     visibilityMinAgeMs: 60000,
