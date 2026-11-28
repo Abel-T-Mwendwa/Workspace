@@ -162,6 +162,8 @@ function setupHomeLive(client, profile, toast) {
   if (hasRouteAdminAccess(profile) && !categories.includes("Riders")) categories.push("Riders");
   const tables = [...new Set(categories.map((category) => HOME_CONFIG[category].table))];
   let refreshing = false;
+  let realtimeTimer = null;
+  let lastRefreshAt = Date.now();
   const refresh = async () => {
     if (refreshing || document.hidden) return;
     refreshing = true;
@@ -190,20 +192,32 @@ function setupHomeLive(client, profile, toast) {
         });
       }
       window.scrollTo({ top: scrollY });
+      lastRefreshAt = Date.now();
     } catch (error) {
       toast(error.message || "Could not refresh Home.", "error");
     } finally {
       refreshing = false;
     }
   };
+  const scheduleRealtimeRefresh = () => {
+    if (realtimeTimer !== null) window.clearTimeout(realtimeTimer);
+    realtimeTimer = window.setTimeout(() => {
+      realtimeTimer = null;
+      if (!refreshing) void refresh();
+    }, 1500);
+  };
   const channels = tables.map((table) => client.channel(`home-${profile.id}-${table}`)
-    .on("postgres_changes", { event: "*", schema: "public", table }, () => { void refresh(); })
+    .on("postgres_changes", { event: "*", schema: "public", table }, scheduleRealtimeRefresh)
     .subscribe());
-  const timer = window.setInterval(() => { void refresh(); }, 25000);
-  const onVisibilityChange = () => { if (!document.hidden) void refresh(); };
+  const refreshIfStale = () => {
+    if (!document.hidden && Date.now() - lastRefreshAt >= 60000) void refresh();
+  };
+  const timer = window.setInterval(refreshIfStale, 60000);
+  const onVisibilityChange = refreshIfStale;
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pagehide", () => {
     window.clearInterval(timer);
+    if (realtimeTimer !== null) window.clearTimeout(realtimeTimer);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     channels.forEach((channel) => { void client.removeChannel(channel); });
   }, { once: true });
@@ -343,65 +357,81 @@ function homeCategoriesForProfile(profile) {
   return categories;
 }
 
+let notificationsSetupStarted = false;
+
 async function setupNotifications(client, profile, toast) {
   const button = document.querySelector("#portal-notification-button");
   const dialog = document.querySelector("#portal-notifications-dialog");
   const count = document.querySelector("#portal-notification-count");
   const list = document.querySelector("#portal-notification-list");
+  if (!button || !dialog || !count || !list || notificationsSetupStarted) return;
+  notificationsSetupStarted = true;
   let notifications = [];
   let unreadCount = 0;
   let blocking = false;
   let timer = null;
+  let realtimeTimer = null;
   let channel = null;
   let firstRefresh = true;
   let assignmentTimer = null;
+  let refreshPromise = null;
+  let lastRefreshAt = 0;
   const pendingAssignments = new Map();
   const shownAssignments = new Set();
-  if (!button || !dialog || !count || !list) return;
 
   async function refresh() {
-    const [notificationsResult, countResult] = await Promise.all([
-      client.from("portal_notifications")
-        .select("id,notification_type,related_id,created_at,read_at")
-        .order("created_at", { ascending: false }).limit(50),
-      client.from("portal_notifications").select("id", { count: "exact", head: true }).is("read_at", null)
-    ]);
-    if (notificationsResult.error || countResult.error) {
-      const error = notificationsResult.error || countResult.error;
-      toast(error.message || "Could not load notifications.", "error");
-      return;
-    }
-    const previousIds = new Set(notifications.map((item) => item.id));
-    notifications = notificationsResult.data || [];
-    const unread = notifications.filter((item) => !item.read_at);
-    unreadCount = countResult.count || 0;
-    count.textContent = String(unreadCount);
-    if (!firstRefresh && profile.role !== "rider") {
-      unread.filter((item) => !previousIds.has(item.id)).forEach((item) => {
-        const label = notificationLabel(item.notification_type);
-        toast(label, "success");
-      });
-    }
-    firstRefresh = false;
-    if (profile.role === "rider") {
-      unread.filter((item) => item.notification_type === "rider_job_assigned").forEach((item) => {
-        if (!shownAssignments.has(item.id)) {
-          shownAssignments.add(item.id);
-          pendingAssignments.set(item.id, item);
-        }
-      });
-      if (pendingAssignments.size) {
-        if (blocking) updateAssignmentDialog(pendingAssignments.size);
-        else if (assignmentTimer === null) {
-          assignmentTimer = window.setTimeout(() => {
-            assignmentTimer = null;
-            if (pendingAssignments.size && !blocking) void showAssignment();
-          }, 500);
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      const [notificationsResult, countResult] = await Promise.all([
+        client.from("portal_notifications")
+          .select("id,notification_type,related_id,created_at,read_at")
+          .order("created_at", { ascending: false }).limit(50),
+        client.from("portal_notifications").select("id", { count: "exact", head: true }).is("read_at", null)
+      ]);
+      if (notificationsResult.error || countResult.error) {
+        const error = notificationsResult.error || countResult.error;
+        toast(error.message || "Could not load notifications.", "error");
+        return false;
+      }
+      const previousIds = new Set(notifications.map((item) => item.id));
+      notifications = notificationsResult.data || [];
+      const unread = notifications.filter((item) => !item.read_at);
+      unreadCount = countResult.count || 0;
+      count.textContent = String(unreadCount);
+      if (!firstRefresh && profile.role !== "rider") {
+        unread.filter((item) => !previousIds.has(item.id)).forEach((item) => {
+          const label = notificationLabel(item.notification_type);
+          toast(label, "success");
+        });
+      }
+      firstRefresh = false;
+      if (profile.role === "rider") {
+        unread.filter((item) => item.notification_type === "rider_job_assigned").forEach((item) => {
+          if (!shownAssignments.has(item.id)) {
+            shownAssignments.add(item.id);
+            pendingAssignments.set(item.id, item);
+          }
+        });
+        if (pendingAssignments.size) {
+          if (blocking) updateAssignmentDialog(pendingAssignments.size);
+          else if (assignmentTimer === null) {
+            assignmentTimer = window.setTimeout(() => {
+              assignmentTimer = null;
+              if (pendingAssignments.size && !blocking) void showAssignment();
+            }, 500);
+          }
         }
       }
+      document.dispatchEvent(new CustomEvent("portal:notifications", { detail: notifications }));
+      if (dialog.open) renderNotifications();
+      lastRefreshAt = Date.now();
+      return true;
+    })();
+    try {
+      return await refreshPromise;
+    } finally {
+      refreshPromise = null;
     }
-    document.dispatchEvent(new CustomEvent("portal:notifications", { detail: notifications }));
-    if (dialog.open) renderNotifications();
   }
 
   async function markRead(notification) {
@@ -496,21 +526,32 @@ async function setupNotifications(client, profile, toast) {
     await markNotificationsRead();
   });
   document.querySelectorAll("[data-close-notifications]").forEach((close) => close.addEventListener("click", () => dialog.close()));
+  const scheduleRealtimeRefresh = () => {
+    if (realtimeTimer !== null) window.clearTimeout(realtimeTimer);
+    realtimeTimer = window.setTimeout(() => {
+      realtimeTimer = null;
+      if (!refreshPromise) void refresh();
+    }, 1500);
+  };
   channel = client.channel(`portal-notifications-${profile.id}`)
     .on("postgres_changes", {
       event: "*", schema: "public", table: "portal_notifications", filter: `recipient_id=eq.${profile.id}`
-    }, () => { void refresh(); })
+    }, scheduleRealtimeRefresh)
     .subscribe();
-  const poll = () => { if (!document.hidden) void refresh(); };
-  timer = window.setInterval(poll, 30000);
+  const refreshIfStale = () => {
+    if (!document.hidden && Date.now() - lastRefreshAt >= 60000) void refresh();
+  };
+  timer = window.setInterval(refreshIfStale, 60000);
   const onVisibilityChange = () => {
-    if (!document.hidden) void refresh();
+    refreshIfStale();
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
   const onRelatedEntry = (event) => { void markRelatedRead(event.detail); };
   document.addEventListener("portal:mark-entry-read", onRelatedEntry);
   window.addEventListener("pagehide", () => {
     if (timer !== null) window.clearInterval(timer);
+    if (realtimeTimer !== null) window.clearTimeout(realtimeTimer);
+    if (assignmentTimer !== null) window.clearTimeout(assignmentTimer);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("portal:mark-entry-read", onRelatedEntry);
     if (channel) void client.removeChannel(channel);
@@ -543,7 +584,7 @@ function notificationDestination(item, profile) {
   const page = type.startsWith("artwork_work_note_")
     ? profile.role === "salesperson" ? "sales.html" : "designer.html"
     : type.startsWith("delivery_") ? "deliveries.html"
-    : type === "rider_job_assigned" && profile.role === "rider" ? "my-jobs.html"
+    : ["rider_job_assigned", "rider_job_deleted"].includes(type) && profile.role === "rider" ? "my-jobs.html"
       : type === "rider_request_new" && hasRouteAdminAccess(profile) ? "route-admin.html" : "riders.html";
   return `./${page}?open=${encodeURIComponent(item.related_id)}`;
 }
@@ -563,6 +604,7 @@ function notificationLabel(type) {
     rider_job_assigned_sales: "Rider assigned to your request",
     rider_job_started: "Rider started your job",
     rider_job_finished: "Rider finished your job",
+    rider_job_deleted: "Rider job deleted",
     artwork_work_note_designer: "Designer added a work note",
     artwork_work_note_salesperson: "Salesperson replied to a work note"
   }[type] || "Update";

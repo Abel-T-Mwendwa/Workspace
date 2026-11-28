@@ -4,12 +4,43 @@
 <body>
   <header id="app-header" class="topbar"></header>
   <main class="page">
-    <div class="page-heading"><div><p class="eyebrow">RIDER WORKSPACE</p><h1>My jobs</h1><p class="muted">Your assigned pickup and dropoff queue.</p></div>
-      <label class="inline-label">Show<select id="my-jobs-filter"><option value="active">Not finished</option><option value="finished">Finished</option><option value="all">All jobs</option></select></label>
-    </div>
+    <div class="page-heading"><div><p class="eyebrow">RIDER WORKSPACE</p><h1>My jobs</h1><p class="muted">Your assigned pickup and dropoff queue.</p></div></div>
     <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="jobs-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="jobs-tallies" class="stats-grid"></div></section>
-    <section class="panel"><div id="my-jobs-list" class="rider-job-list"></div><p id="my-jobs-empty" class="empty-state hidden">No jobs match this filter.</p><button type="button" class="secondary hidden" id="my-jobs-more">Load more</button></section>
+    <input type="hidden" id="my-jobs-filter" value="active">
+    <div id="my-jobs-filter-chips" class="production-goods-chips my-jobs-filter-chips" role="group" aria-label="Job status">
+      <button type="button" class="production-goods-chip production-goods-chip-pending is-active" data-my-jobs-filter="active" aria-pressed="true">Pending</button>
+      <button type="button" class="production-goods-chip production-goods-chip-ready" data-my-jobs-filter="finished" aria-pressed="false">Finished</button>
+      <button type="button" class="production-goods-chip production-goods-chip-all" data-my-jobs-filter="all" aria-pressed="false">All</button>
+    </div>
+    <section class="panel"><p id="my-jobs-loading" class="muted" role="status">Loading your jobs…</p><p id="my-jobs-error" class="empty-state hidden" role="alert">Could not load your jobs. <button type="button" class="secondary" id="my-jobs-retry">Retry</button></p><div id="my-jobs-list" class="rider-job-list hidden" aria-busy="true"></div><p id="my-jobs-empty" class="empty-state hidden">No jobs match this filter.</p><button type="button" class="secondary hidden" id="my-jobs-more">Load more</button></section>
   </main>
+  <dialog id="delivery-activity-dialog" class="delivery-activity-dialog" aria-labelledby="delivery-activity-title">
+    <div class="delivery-activity-content">
+      <div class="section-heading delivery-activity-controls"><h2 id="delivery-activity-heading"></h2><button type="button" class="icon-button" data-delivery-activity-close aria-label="Close">×</button></div>
+      <div id="delivery-activity-printable">
+        <header class="delivery-activity-print-header">
+          <h2 id="delivery-activity-title"></h2>
+          <p id="delivery-activity-range"></p>
+          <p id="delivery-activity-total">Total: 0</p>
+          <p id="delivery-activity-printed"></p>
+        </header>
+        <p id="delivery-activity-message" role="status"></p>
+        <div class="delivery-activity-table-shell">
+          <div class="table-wrap">
+            <table id="delivery-activity-table">
+              <colgroup><col style="width:24%"><col style="width:24%"><col style="width:17%"><col style="width:17%"><col style="width:18%"></colgroup>
+              <thead><tr><th>Client / Contact</th><th>Address / Details</th><th>Type</th><th>Rider time</th><th>Status</th></tr></thead>
+              <tbody id="delivery-activity-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions delivery-activity-controls">
+        <button type="button" class="secondary" id="delivery-activity-print">Print / Save as PDF</button>
+        <button type="button" class="quiet" data-delivery-activity-close>Close</button>
+      </div>
+    </div>
+  </dialog>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
   <script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
 </body>

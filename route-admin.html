@@ -8,22 +8,44 @@
     <section class="panel"><div class="section-heading"><h2>My activity</h2><label class="inline-label">Period<select id="route-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div id="route-tallies" class="stats-grid"></div></section>
     <section class="panel" id="route-admin-panel">
       <div class="section-heading"><h2>Rider requests</h2><span id="rider-job-count" class="muted"></span></div>
-      <div class="toolbar"><input id="route-search" placeholder="Search reference or client"><button type="button" class="secondary hidden" id="route-more">Load more</button></div>
-      <div id="route-filter-bar" class="route-filter-bar">
-        <label>Period<select id="route-request-period"><option value="today" selected>Today</option><option value="week">This week</option><option value="month">This month</option><option value="all">All dates</option></select></label>
-        <label id="route-salesperson-filter">Salesperson<select id="route-salesperson-filter-select"><option value="">All salespeople</option></select></label>
-        <div class="route-filter-actions"><button type="button" class="secondary" id="route-clear-filters">Clear filters</button><button type="button" class="quiet" id="route-reset-filters">Reset to default</button></div>
-      </div>
+      <div class="toolbar"><input id="route-search" placeholder="Search reference or client"></div>
       <div id="route-rider-filter" class="route-chip-filter"><span>Rider</span><div id="route-rider-chips" class="production-goods-chips route-filter-chips" role="group" aria-label="Filter by rider"></div></div>
       <div class="route-chip-filter"><span>Status</span><div id="route-status-chips" class="production-goods-chips route-filter-chips" role="group" aria-label="Filter by status"></div></div>
       <p class="route-filter-summary"><span id="route-results-count">Showing 0 requests</span><span id="route-active-filters"></span></p>
-      <div class="table-wrap"><table><thead><tr><th>SR / Ref</th><th>Salesperson</th><th>Client / contact</th><th>Address / details</th><th>Type</th><th>Expected</th><th>Requested</th><th>Rider</th><th>Rider time</th><th>Status</th><th>Action</th></tr></thead><tbody id="route-rider-rows"></tbody></table></div>
+      <div class="table-wrap" id="route-rider-table-wrap"><table id="route-admin-table"><thead><tr><th class="col-sr-ref">SR / Ref</th><th>Salesperson</th><th>Client / contact</th><th>Address / details</th><th>Type</th><th>Expected</th><th>Requested</th><th>Rider</th><th>Rider time</th><th>Status</th><th>Action</th></tr></thead><tbody id="route-rider-rows"></tbody></table></div>
+      <div id="route-table-sticky-scrollbar" class="route-table-sticky-scrollbar hidden" aria-hidden="true"><div></div></div>
       <p id="route-rider-empty" class="empty-state hidden">No rider requests match these filters.</p>
     </section>
-    <section class="panel hidden" id="route-riders-panel"><div class="section-heading"><h2>Riders</h2></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Status</th></tr></thead><tbody id="route-riders-rows"></tbody></table></div></section>
     <section class="panel hidden" id="rider-request-panel"></section>
     <section class="panel hidden" id="riders-list-panel"></section>
   </main>
+  <dialog id="delivery-activity-dialog" class="delivery-activity-dialog" aria-labelledby="delivery-activity-title">
+    <div class="delivery-activity-content">
+      <div class="section-heading delivery-activity-controls"><h2 id="delivery-activity-heading"></h2><button type="button" class="icon-button" data-delivery-activity-close aria-label="Close">×</button></div>
+      <div id="delivery-activity-printable">
+        <header class="delivery-activity-print-header">
+          <h2 id="delivery-activity-title"></h2>
+          <p id="delivery-activity-range"></p>
+          <p id="delivery-activity-total">Total: 0</p>
+          <p id="delivery-activity-printed"></p>
+        </header>
+        <p id="delivery-activity-message" role="status"></p>
+        <div class="delivery-activity-table-shell">
+          <div class="table-wrap">
+            <table id="delivery-activity-table">
+              <colgroup><col style="width:12%"><col style="width:13%"><col style="width:21%"><col style="width:24%"><col style="width:16%"><col style="width:14%"></colgroup>
+              <thead><tr><th>Rider time</th><th>Salesperson</th><th>Client / Contact</th><th>Address</th><th>Rider</th><th>Status</th></tr></thead>
+              <tbody id="delivery-activity-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions delivery-activity-controls">
+        <button type="button" class="secondary" id="delivery-activity-print">Print / Save as PDF</button>
+        <button type="button" class="quiet" data-delivery-activity-close>Close</button>
+      </div>
+    </div>
+  </dialog>
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
   <script src="config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script type="module" src="js/app.js"></script>
 </body>
