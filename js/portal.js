@@ -75,7 +75,7 @@ function pageAllowed(page, profile) {
   const { role } = profile;
   if (page === "status-board.html") return canSeeStatusBoard(profile);
   if (role === "user" && !hasProductionAccess(profile) && !hasDispatchAccess(profile)) return page === "riders.html";
-  if (page === "production-store.html") return hasProductionStoreAccess(profile);
+  if (page === "production-store.html") return role === "admin" || hasProductionStoreAccess(profile);
   if (role === "admin") return page !== "my-jobs.html";
   if (page === "home.html" && (hasProductionAccess(profile) || hasDispatchAccess(profile))) return true;
   if (page === "deliveries.html" && (hasProductionAccess(profile) || hasDispatchAccess(profile))) return true;
@@ -120,7 +120,8 @@ export async function initPortal(client, profile, page, toast) {
   if (hasDispatchAccess(profile) && !tabs.some(([, href]) => href === "vehicles.html")) {
     tabs.push(["Vehicles", "vehicles.html"]);
   }
-  if (hasProductionStoreAccess(profile) && !tabs.some(([, href]) => href === "production-store.html")) {
+  if ((profile.role === "admin" || hasProductionStoreAccess(profile))
+    && !tabs.some(([, href]) => href === "production-store.html")) {
     tabs.push(["Production store", "production-store.html"]);
   }
   if (hasRiderRequestAccess(profile) && !tabs.some(([, href]) => href === "riders.html")) {

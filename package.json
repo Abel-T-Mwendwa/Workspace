@@ -1,0 +1,10 @@
+{
+  "name": "srtwork",
+  "private": true,
+  "scripts": {
+    "lint": "eslint js"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1"
+  }
+}

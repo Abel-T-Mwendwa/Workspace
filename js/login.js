@@ -1,5 +1,5 @@
 import { client } from "./core/supabase-client.js";
-import { clearLoginAt, LOGIN_AT_KEY, SESSION_DURATION_MS, sessionIsWithinLimit } from "./core/session.js";
+import { clearLoginAt, LOGIN_AT_KEY, sessionIsWithinLimit } from "./core/session.js";
 import { bindPasswordHints } from "./ui/password-hints.js";
 
 const form = document.querySelector("#login-form");

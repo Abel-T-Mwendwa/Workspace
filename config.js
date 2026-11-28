@@ -3,6 +3,16 @@ window.APP_CONFIG = {
   supabaseAnonKey: "sb_publishable_nU01uqUoxhqzInoPxxhXxw_Z-tGodto"
 };
 
+// Load the ignored staging override before the app scripts on local pages.
+if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+  if (new URLSearchParams(window.location.search).get("workspace-config") === "staging") {
+    window.sessionStorage.setItem("workspace-config", "staging");
+  }
+  if (window.sessionStorage.getItem("workspace-config") === "staging") {
+    document.write('<script src="config.staging.local.js"><\/script>');
+  }
+}
+
 window.createEgressDebugFetch = function createEgressDebugFetch() {
   let enabled = false;
   try {

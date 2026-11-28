@@ -6137,3 +6137,131 @@ body.status-board-page {
     -webkit-print-color-adjust: exact !important;
   }
 }
+
+.production-store-edit-row {
+  cursor: pointer;
+}
+
+.production-store-edit-row:hover > td {
+  background: #fafbfd;
+}
+
+.production-store-edit-row:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.production-store-ready-exit {
+  transition: transform 300ms ease-in, opacity 300ms ease-in;
+  transform: translateX(110%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#delivery-items-dialog,
+#partial-release-dialog,
+#delivery-edit-dialog.production-store-edit-dialog {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  max-height: calc(100dvh - 24px);
+  overflow: hidden;
+  border-radius: 15px;
+}
+
+#delivery-items-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-width: 560px;
+}
+
+#delivery-items-dialog .delivery-item-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#partial-release-dialog {
+  width: min(380px, calc(100vw - 24px));
+  max-width: 380px;
+}
+
+#delivery-edit-dialog.production-store-edit-dialog {
+  width: min(640px, calc(100vw - 24px));
+  max-width: 640px;
+}
+
+#delivery-items-dialog .line-dialog-content,
+#partial-release-dialog .line-dialog-content,
+#delivery-edit-dialog.production-store-edit-dialog .line-dialog-content {
+  max-height: calc(100dvh - 24px);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#partial-release-lines {
+  display: grid;
+  gap: 12px;
+}
+
+.partial-release-line {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.partial-release-line p {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  #delivery-items-dialog .delivery-item-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+#dispatch-dialog:has(.dispatch-deliver-trip) {
+  width: min(420px, calc(100vw - 24px));
+  max-width: 420px;
+}
+
+.dispatch-deliver-trip {
+  display: grid;
+  gap: 10px;
+}
+
+.dispatch-deliver-trip h3 {
+  margin: 0;
+  color: #36445c;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dispatch-deliver-trip label {
+  gap: 7px;
+  font-size: 12px;
+}
+
+.dispatch-deliver-trip details[open] {
+  display: grid;
+  gap: 6px;
+}
+
+.dispatch-deliver-trip summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.dispatch-deliver-trip summary::-webkit-details-marker {
+  display: none;
+}
+
+.dispatch-deliver-trip details button {
+  justify-self: start;
+  padding: 6px 9px;
+  font-size: 12px;
+}

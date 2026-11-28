@@ -3,13 +3,9 @@ import { toast } from "../ui/toast.js";
 import { escapeHtml } from "../utils/escape-html.js";
 import { debounce } from "../utils/debounce.js";
 import { canSeeStatusBoard, homePageForRole } from "../portal.js";
-import {
-  deliverySoNumbers, deliveryAddressUrgent, deliveryGoodsStatusLabel, deliveryGoodsStatus,
-  deliveryProductionStatusMarkup, deliveryDispatchStatusMarkup
-} from "../utils/delivery-rows.js";
+import { deliverySoNumbers } from "../utils/delivery-rows.js";
 
 let profile;
-let page;
 
 const STATUS_BOARD_REFRESH_MS = 3 * 60 * 1000;
 const STATUS_BOARD_PROFILES_TTL_MS = 10 * 60 * 1000;
@@ -25,10 +21,13 @@ const STATUS_COLOURS = {
   "Partially ready": "orange",
   Ready: "green",
   "In production": "blue",
+  "Partly received": "orange",
+  "Fully received": "green",
   "In progress": "blue",
   Packed: "blue",
   "Not packed": "orange",
   "Not delivered": "blue",
+  "Partially delivered": "orange",
   "On route": "teal",
   Delivered: "green",
   "On hold": "orange",
@@ -104,11 +103,12 @@ let statusBoardUnknownStatuses = new Set();
 let statusBoardReportedIssues = new Set();
 
 function statusBoardStageOf(row) {
-  if (row.delivered_at || row.dispatch_status === "Delivered") return "delivered";
-  if (row.production_status === "Ready" || row.dispatched_at) return "dispatch";
-  if (["ready", "partial"].includes(row.goods_status)) return "production";
-  if (!row.goods_status || row.goods_status === "not_ready") return "production_store";
-  return "production";
+  return ({
+    "Production store": "production_store",
+    Production: "production",
+    Dispatch: "dispatch",
+    Delivered: "delivered"
+  })[row.progress?.board_stage] || null;
 }
 
 function statusBoardDate(value) {
@@ -168,17 +168,13 @@ function statusBoardColour(value) {
 }
 
 function statusBoardDisplayStatus(row, stage) {
+  const progress = row.progress;
+  if (!progress) return "—";
   if (stage === "production_store") {
-    return row.goods_status === "ready" ? "Ready"
-      : row.goods_status === "partial" ? "Partially ready"
-        : row.goods_status === "not_ready" ? "Not ready" : row.goods_status || "—";
+    return progress.goods_status || "—";
   }
-  if (stage === "production") return row.production_status || "—";
-  if (stage === "dispatch") {
-    if (row.dispatch_status === "Delivered") return "Delivered";
-    return row.dispatched_at ? "Not delivered" : "Not packed";
-  }
-  return row.dispatch_status === "Delivered" ? "Delivered" : row.dispatch_status || "—";
+  if (stage === "production") return progress.production_state || "—";
+  return progress.dispatch_state || "—";
 }
 
 function statusBoardRecordColour(row, stage) {
@@ -186,15 +182,10 @@ function statusBoardRecordColour(row, stage) {
 }
 
 function statusBoardCardStatusMarkup(row, stage) {
-  if (stage === "production_store") {
-    const status = deliveryGoodsStatus(row);
-    if (!status) return "—";
-    const colour = status === "ready" ? "green" : status === "partial" ? "orange" : "red";
-    const label = status === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(status);
-    return `<span class="goods-status-pill delivery-status-${colour}">${escapeHtml(label)}</span>`;
-  }
-  if (stage === "production") return deliveryProductionStatusMarkup(row, "—", false);
-  return deliveryDispatchStatusMarkup(row, "—", false);
+  const status = statusBoardDisplayStatus(row, stage);
+  if (status === "—") return status;
+  const goodsClass = stage === "production_store" ? "goods-status-pill " : "";
+  return `<span class="${goodsClass}delivery-status-${statusBoardColour(status)}">${escapeHtml(status)}</span>`;
 }
 
 function statusBoardDateRangeIncludes(row, stage) {
@@ -202,7 +193,7 @@ function statusBoardDateRangeIncludes(row, stage) {
   const from = document.querySelector("#status-board-date-from").value;
   const to = document.querySelector("#status-board-date-to").value;
   if (!from && !to) return true;
-  const deliveredDate = statusBoardDate(row.delivered_at);
+  const deliveredDate = statusBoardDate(row.latestTripDeliveredOn);
   return Boolean(deliveredDate && (!from || deliveredDate >= from) && (!to || deliveredDate <= to));
 }
 
@@ -220,6 +211,7 @@ function statusBoardBuildView() {
       if (!values.some((value) => String(value || "").toLowerCase().includes(search))) continue;
     }
     const stage = statusBoardStageOf(row);
+    if (!stage) continue;
     if (!statusBoardDateRangeIncludes(row, stage)) continue;
     visibleRows.push(row);
     stages[stage].push(row);
@@ -363,13 +355,6 @@ function statusBoardStatusCounts(counts) {
     .map(([label, count]) => `${count} ${label}`).join(" · ");
 }
 
-function statusBoardItems(row) {
-  const items = Array.isArray(row.items) ? row.items : [];
-  if (!items.length) return "—";
-  const first = `${String(items[0].item_name || "—")} × ${String(items[0].quantity || "—")} pcs`;
-  return `${first}${items.length > 1 ? ` +${items.length - 1} more` : ""}`;
-}
-
 function statusBoardFullItems(row) {
   const items = Array.isArray(row.items) ? row.items : [];
   if (!items.length) return "—";
@@ -380,8 +365,8 @@ function statusBoardFullItems(row) {
 
 function statusBoardSort(rows, stage) {
   return [...rows].sort((a, b) => {
-    const timeA = new Date((stage === "dispatch" ? a.ready_at : stage === "delivered" ? a.delivered_at : a.created_at) || a.created_at || 0).getTime() || 0;
-    const timeB = new Date((stage === "dispatch" ? b.ready_at : stage === "delivered" ? b.delivered_at : b.created_at) || b.created_at || 0).getTime() || 0;
+    const timeA = new Date((stage === "dispatch" ? a.latestTripCreatedAt : stage === "delivered" ? a.latestTripDeliveredOn : a.created_at) || a.created_at || 0).getTime() || 0;
+    const timeB = new Date((stage === "dispatch" ? b.latestTripCreatedAt : stage === "delivered" ? b.latestTripDeliveredOn : b.created_at) || b.created_at || 0).getTime() || 0;
     return stage === "delivered" ? timeB - timeA : timeA - timeB;
   });
 }
@@ -394,7 +379,10 @@ function statusBoardCard(row, stage) {
   const salesperson = statusBoardProfiles.get(row.salesperson_id || row.created_by) || "—";
   const href = stage === "production_store" ? "./production-store.html" : "./deliveries.html";
   const items = statusBoardFullItems(row);
-  const urgent = deliveryAddressUrgent(row);
+  const deliveredLine = row.progress?.balance > 0
+    ? `<div class="status-board-card-meta">Delivered ${escapeHtml(row.progress.delivered)}/${escapeHtml(row.progress.job_card_total)}</div>`
+    : "";
+  const urgent = row.packedAddressUrgent;
   const boardKey = `delivery:${row.id}`;
   const moved = statusBoardMovedKeys.has(boardKey) ? " status-board-card-moved" : "";
   const dueBadge = statusBoardDueBadge(row.delivery_date, stage === "delivered");
@@ -404,6 +392,7 @@ function statusBoardCard(row, stage) {
     ${row.client_name?.trim() ? `<div class="status-board-card-client">${escapeHtml(row.client_name)}</div>` : ""}
     <div class="status-board-card-meta">${escapeHtml(salesperson)} · ${escapeHtml(row.ref_no || "—")}</div>
     <div class="status-board-card-meta">Delivery ${escapeHtml(statusBoardDateLabel(row.delivery_date))}</div>
+    ${deliveredLine}
     ${dueBadge ? `<div class="status-board-card-badges">${dueBadge}</div>` : ""}
     ${urgent ? '<div class="status-board-address-urgent">URGENT: address missing</div>' : ""}
     <div class="status-board-card-items" title="${escapeHtml(items)}">${escapeHtml(items)}</div>
@@ -430,7 +419,7 @@ function statusBoardRenderKanban(stages, statusCounts, selectedStage = "all") {
 }
 
 function statusBoardDispatchStatus(row) {
-  return row.dispatch_status === "Delivered" ? "Delivered" : row.dispatched_at ? "Not delivered" : "Not packed";
+  return row.progress?.dispatch_state || "—";
 }
 
 function statusBoardTableRows(stages, view) {
@@ -446,11 +435,18 @@ function statusBoardTableRows(stages, view) {
 }
 
 function statusBoardTableRowMarkup(row) {
-  const goodsStatus = deliveryGoodsStatus(row);
-  const goodsColour = goodsStatus === "ready" ? "green" : goodsStatus === "partial" ? "orange" : "red";
-  const goodsLabel = goodsStatus === "partial" ? "Partially ready" : deliveryGoodsStatusLabel(goodsStatus);
+  const goodsStatus = row.progress?.goods_status;
+  const goodsColour = statusBoardColour(goodsStatus);
   const goodsMarkup = goodsStatus
-    ? `<span class="goods-status-pill delivery-status-${goodsColour}">${escapeHtml(goodsLabel)}</span>`
+    ? `<span class="goods-status-pill delivery-status-${goodsColour}">${escapeHtml(goodsStatus)}</span>`
+    : "—";
+  const productionState = row.progress?.production_state;
+  const dispatchState = row.progress?.dispatch_state;
+  const productionMarkup = productionState
+    ? `<span class="delivery-status-${statusBoardColour(productionState)}">${escapeHtml(productionState)}</span>`
+    : "—";
+  const dispatchMarkup = dispatchState
+    ? `<span class="delivery-status-${statusBoardColour(dispatchState)}">${escapeHtml(dispatchState)}</span>`
     : "—";
   return `<tr>
     <td>${escapeHtml(deliverySoNumbers(row).join(", ") || "—")}</td>
@@ -458,8 +454,8 @@ function statusBoardTableRowMarkup(row) {
     <td>${escapeHtml(row.client_name || "—")}</td>
     <td>${escapeHtml(statusBoardFullItems(row))}</td>
     <td>${goodsMarkup}</td>
-    <td>${deliveryProductionStatusMarkup(row)}</td>
-    <td>${deliveryDispatchStatusMarkup(row)}</td>
+    <td>${productionMarkup}</td>
+    <td>${dispatchMarkup}</td>
   </tr>`;
 }
 
@@ -539,35 +535,6 @@ function statusBoardFormatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Nairobi" }).format(date);
-}
-
-function statusBoardTimelineRows(row) {
-  const current = statusBoardStageOf(row);
-  const currentIndex = STATUS_BOARD_STAGES.findIndex(([key]) => key === current);
-  return STATUS_BOARD_STAGES.map(([stage, label], index) => {
-    const done = index < currentIndex || stage === "delivered" && current === "delivered";
-    const isCurrent = stage === current && !done;
-    const colour = done ? "green" : isCurrent ? statusBoardRecordColour(row, stage) : "grey";
-    const whoId = stage === "production_store" ? row.created_by : null;
-    const time = stage === "production_store" ? row.created_at
-      : stage === "production" && row.production_status === "Ready" ? row.ready_at
-        : stage === "dispatch" ? row.dispatched_at || row.ready_at
-          : stage === "delivered" ? row.delivered_at : null;
-    const who = whoId ? statusBoardProfiles.get(whoId) || "—" : "—";
-    const status = statusBoardDisplayStatus(row, stage);
-    const marker = done ? "✓" : isCurrent ? "●" : "○";
-    return `<li class="status-board-timeline-step ${done ? "is-complete" : isCurrent ? `is-current status-board-timeline-${colour}` : "is-future"}">
-      <span class="status-board-timeline-marker" aria-hidden="true">${marker}</span><div><strong>${escapeHtml(label)}</strong><span class="status-board-status status-board-status-${colour}">${escapeHtml(status)}</span>
-      <small>Who: ${escapeHtml(who)} · When: ${escapeHtml(statusBoardFormatDateTime(time))}</small></div></li>`;
-  }).join("");
-}
-
-function statusBoardOpenTimeline(id) {
-  const row = statusBoardRows.find((record) => record.id === id);
-  if (!row) return;
-  document.querySelector("#status-board-dialog-title").textContent = `${row.ref_no || "Delivery"} · SR ${row.sr}`;
-  document.querySelector("#status-board-timeline").innerHTML = `<ol class="status-board-timeline">${statusBoardTimelineRows(row)}</ol>`;
-  document.querySelector("#status-board-dialog").showModal();
 }
 
 function statusBoardRender() {
@@ -873,19 +840,15 @@ function statusBoardScheduleRefresh() {
 
 function statusBoardReportDataIssues(rows) {
   const issues = new Map([
-    ["goods_status", []],
+    ["delivery progress", []],
     ["client name", []],
     ["contact name", []]
   ]);
   rows.forEach((row) => {
     const stage = statusBoardStageOf(row);
-    if (!row.goods_status) issues.get("goods_status").push(row);
+    if (!row.progress?.goods_status || !stage) issues.get("delivery progress").push(row);
     if (!row.client_name?.trim()) issues.get("client name").push(row);
     if (!row.contact_name?.trim()) issues.get("contact name").push(row);
-    if (statusBoardDisplayStatus(row, stage) === "—" && row.goods_status) {
-      if (!issues.has("stage status")) issues.set("stage status", []);
-      issues.get("stage status").push(row);
-    }
   });
   issues.forEach((affected, field) => {
     const unreported = affected.filter((row) => {
@@ -927,7 +890,7 @@ async function statusBoardRefresh() {
   try {
     const results = await Promise.allSettled([
       client.from("deliveries")
-        .select("id,sr,ref_no,created_at,created_by,salesperson_id,goods_status,client_name,contact_name,items,production_status,dispatch_status,ready_at,dispatched_at,delivered_at,delivery_date")
+        .select("id,sr,ref_no,created_at,created_by,salesperson_id,client_name,contact_name,items,delivery_date")
         .order("created_at", { ascending: false }).limit(1000),
       refreshProfiles
         ? client.from("profiles").select("id,full_name").limit(1000)
@@ -939,12 +902,82 @@ async function statusBoardRefresh() {
     ]);
     const [deliveryResult, profilesResult, artworksResult, ridersResult] = results.map((result) =>
       result.status === "fulfilled" ? result.value : { error: result.reason });
+    let deliveryProgressLoaded = false;
     if (deliveryResult.error) {
       statusBoardReportRefreshError("deliveries", deliveryResult.error, "Could not load delivery statuses.");
     } else {
-      statusBoardRows = deliveryResult.data || [];
-      statusBoardUpdateMovement("delivery", statusBoardRows, statusBoardStageOf);
-      statusBoardReportDataIssues(statusBoardRows);
+      const deliveries = deliveryResult.data || [];
+      const deliveryIds = deliveries.map((row) => row.id);
+      if (!deliveryIds.length) {
+        statusBoardRows = [];
+        statusBoardUpdateMovement("delivery", statusBoardRows, statusBoardStageOf);
+        statusBoardReportDataIssues(statusBoardRows);
+        deliveryProgressLoaded = true;
+      } else {
+        const [progressResult, tripsResult, tripItemsResult] = await Promise.all([
+          client.from("delivery_request_progress")
+            .select("delivery_id,job_card_total,released,received,in_production,packed,delivered,balance,goods_status,production_state,dispatch_state,board_stage")
+            .in("delivery_id", deliveryIds),
+          client.from("dispatch_trips")
+            .select("id,delivery_id,status,delivered_on,delivery_address,voided_at,created_at")
+            .in("delivery_id", deliveryIds)
+            .order("created_at", { ascending: false }),
+          client.from("dispatch_trip_items")
+            .select("trip_id,delivery_id,item_key,qty_packed,qty_delivered")
+            .in("delivery_id", deliveryIds)
+        ]);
+        if (progressResult.error) {
+          statusBoardReportRefreshError("delivery_request_progress", progressResult.error, "Could not load delivery progress.");
+        }
+        if (tripsResult.error) {
+          statusBoardReportRefreshError("dispatch_trips", tripsResult.error, "Could not load delivery trips.");
+        }
+        if (tripItemsResult.error) {
+          statusBoardReportRefreshError("dispatch_trip_items", tripItemsResult.error, "Could not load packed delivery items.");
+        }
+        if (!progressResult.error && !tripsResult.error && !tripItemsResult.error) {
+          const progressByDeliveryId = new Map((progressResult.data || [])
+            .map((progress) => [progress.delivery_id, progress]));
+          const tripsByDeliveryId = new Map();
+          for (const trip of tripsResult.data || []) {
+            const trips = tripsByDeliveryId.get(trip.delivery_id) || [];
+            trips.push(trip);
+            tripsByDeliveryId.set(trip.delivery_id, trips);
+          }
+          const tripItemsByTripId = new Map();
+          for (const tripItem of tripItemsResult.data || []) {
+            const items = tripItemsByTripId.get(tripItem.trip_id) || [];
+            items.push(tripItem);
+            tripItemsByTripId.set(tripItem.trip_id, items);
+          }
+          statusBoardRows = deliveries.map((row) => {
+            const progress = progressByDeliveryId.get(row.id);
+            const trips = (tripsByDeliveryId.get(row.id) || []).filter((trip) => !trip.voided_at);
+            const latestDeliveredTrip = trips
+              .filter((trip) => trip.status === "Delivered" && trip.delivered_on)
+              .reduce((latest, trip) => !latest || trip.delivered_on > latest.delivered_on ? trip : latest, null);
+            const packedAddressUrgent = progress?.dispatch_state !== "Delivered" && trips.some((trip) => {
+              if (!["Packed", "Out for delivery"].includes(trip.status)
+                || String(trip.delivery_address || "").trim()) return false;
+              return (tripItemsByTripId.get(trip.id) || []).some((tripItem) => {
+                const item = (Array.isArray(row.items) ? row.items : [])
+                  .find((line) => line.item_key === tripItem.item_key);
+                return tripItem.qty_packed > 0 && !String(item?.address || "").trim();
+              });
+            });
+            return {
+              ...row,
+              progress,
+              latestTripDeliveredOn: latestDeliveredTrip?.delivered_on || null,
+              latestTripCreatedAt: trips[0]?.created_at || null,
+              packedAddressUrgent
+            };
+          });
+          statusBoardUpdateMovement("delivery", statusBoardRows, statusBoardStageOf);
+          statusBoardReportDataIssues(statusBoardRows);
+          deliveryProgressLoaded = true;
+        }
+      }
     }
     if (profilesResult.error) {
       statusBoardReportRefreshError("profiles", profilesResult.error, "Could not load status board people.");
@@ -970,7 +1003,7 @@ async function statusBoardRefresh() {
     statusBoardRestoreScroll(scroll);
     statusBoardMeasureTop();
     statusBoardUpdatedText();
-    if (!deliveryResult.error && !profilesResult.error && !artworksResult.error && !ridersResult.error) {
+    if (deliveryProgressLoaded && !profilesResult.error && !artworksResult.error && !ridersResult.error) {
       statusBoardLastRefreshAt = Date.now();
     }
   } catch (error) {
@@ -999,7 +1032,6 @@ function statusBoardSelectTab(tabName, focus = false) {
 
 export async function initStatusBoard({ profile: currentProfile, page: currentPage }) {
   profile = currentProfile;
-  page = currentPage;
   if (!canSeeStatusBoard(profile)) {
     location.replace(`./${homePageForRole()}`);
     return;
